@@ -291,7 +291,7 @@ impl Linker {
             };
 
             let ver_req = obj.get_version_req(sym_idx);
-            let lookup = self.lookup_symbol(sym_name, ver_req.as_ref(), obj_idx);
+            let lookup = self.lookup_symbol(sym_name, ver_req.as_ref());
 
             if let Some((res, tls_id, tls_off)) = lookup {
                 unsafe {
@@ -317,11 +317,8 @@ impl Linker {
         &'a self,
         name: &str,
         ver_req: Option<&VersionReq>,
-        skip_obj_idx: usize,
     ) -> Option<(LookupResult, usize, usize)> {
-        for (i, dso) in self.objects.iter().enumerate() {
-            if i == skip_obj_idx { continue; }
-
+        for dso in &self.objects {
             unsafe {
                 if let Some(res) = find_symbol_linux_style(
                     name,

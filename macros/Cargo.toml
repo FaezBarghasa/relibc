@@ -1,0 +1,11 @@
+[package]
+name = "macros"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+platform = { path = "../platform" }
+
+[lib]
+name = "macros"
+crate-type = ["rlib"]

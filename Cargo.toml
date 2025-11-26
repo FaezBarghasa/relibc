@@ -16,6 +16,7 @@ members = [
     "redox-rt",
     "ld_so",
     "generic-rt",
+    "macros",
 ]
 exclude = ["tests", "dlmalloc-rs"]
 
@@ -26,6 +27,7 @@ cc = "1"
 bitflags = "2"
 cbitset = "0.2"
 posix-regex = { version = "0.1.4", features = ["no_std"] }
+macros = { path = "macros" }
 
 # TODO: For some reason, rand_jitter hasn't been updated to use the latest rand_core
 rand = { version = "0.8", default-features = false, features = ["small_rng"] }

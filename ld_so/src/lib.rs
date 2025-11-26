@@ -6,12 +6,17 @@
 
 #![no_std]
 #![feature(naked_functions)]
+#![feature(core_intrinsics)]
 //#![feature(link_args)]
 #![allow(clippy::missing_safety_doc)]
 
 extern crate alloc;
+#[macro_use]
+extern crate macros;
+extern crate platform;
 
 // --- Core Modules ---
+pub mod allocator;
 pub mod callbacks;
 pub mod debug;
 pub mod dso;
@@ -31,7 +36,6 @@ pub mod versioning;
 use core::arch::global_asm;
 use crate::linker::Linker;
 use crate::dso::DSO;
-use crate::debug;
 
 // Define the entry point _start.
 #[cfg(target_arch = "x86_64")]
@@ -64,87 +68,100 @@ global_asm!(
 /// The Rust Entry Point.
 #[no_mangle]
 pub unsafe extern "C" fn linker_entry(sp: *const usize) -> ! {
-    let main_dso = DSO::new_executable(sp);
+    let main_dso = unsafe { DSO::new_executable(sp) };
     let load_base = main_dso.base_addr;
 
-    if let Err(e) = verify::verify_self_integrity(load_base) {
-        debug::dprintln(e);
+    if let Err(e) = unsafe { verify::verify_self_integrity(load_base) } {
+        println!("{}", e);
         core::intrinsics::abort();
     }
-    if let Err(e) = verify::verify_bss_relocations() {
-        debug::dprintln(e);
+    if let Err(e) = unsafe { verify::verify_bss_relocations() } {
+        println!("{}", e);
         core::intrinsics::abort();
     }
 
     // Find envp to parse Tunables
     // Stack Layout: [Argc] [Argv...] [0] [Envp...]
-    let argc = *sp;
-    let argv = sp.add(1);
-    let envp = argv.add(argc + 1) as *const *const i8;
+    let argc = unsafe { *sp };
+    let argv = unsafe { sp.add(1) };
+    let envp = unsafe { argv.add(argc + 1) as *const *const i8 };
 
     // 3. Initialize Linker with Env vars
     let mut linker = Linker::new(envp);
 
     linker.link(main_dso);
 
-    enter_entry_point(sp, linker.get_entry_point());
+    unsafe { enter_entry_point(sp, linker.get_entry_point()) };
 }
 
 #[cfg(target_arch = "x86_64")]
 unsafe fn enter_entry_point(sp: *const usize, entry: usize) -> ! {
-    core::arch::asm!(
-        "mov rsp, {0}",
-        "jmp {1}",
-        in(reg) sp,
-        in(reg) entry,
-        options(noreturn)
-    )
+    unsafe {
+        core::arch::asm!(
+            "mov rsp, {0}",
+            "jmp {1}",
+            in(reg) sp,
+            in(reg) entry,
+            options(noreturn)
+        )
+    }
 }
 
 #[cfg(target_arch = "aarch64")]
 unsafe fn enter_entry_point(sp: *const usize, entry: usize) -> ! {
-    core::arch::asm!(
-        "mov sp, {0}",
-        "br {1}",
-        in(reg) sp,
-        in(reg) entry,
-        options(noreturn)
-    )
+    unsafe {
+        core::arch::asm!(
+            "mov sp, {0}",
+            "br {1}",
+            in(reg) sp,
+            in(reg) entry,
+            options(noreturn)
+        )
+    }
 }
 
 #[cfg(target_arch = "riscv64")]
 unsafe fn enter_entry_point(sp: *const usize, entry: usize) -> ! {
-    core::arch::asm!(
-        "mv sp, {0}",
-        "jr {1}",
-        in(reg) sp,
-        in(reg) entry,
-        options(noreturn)
-    )
+    unsafe {
+        core::arch::asm!(
+            "mv sp, {0}",
+            "jr {1}",
+            in(reg) sp,
+            in(reg) entry,
+            options(noreturn)
+        )
+    }
 }
 
+/*
 #[panic_handler]
 fn panic(_info: &core::panic::PanicInfo) -> ! {
     core::intrinsics::abort()
 }
+*/
 
 #[no_mangle]
-pub extern "C" fn __dso_handle() {}
+pub unsafe extern "C" fn __dso_handle() {}
 
 #[no_mangle]
-pub extern "C" fn __rust_alloc(size: usize, align: usize) -> *mut u8 {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __rust_alloc(size: usize, align: usize) -> *mut u8 {
+    unsafe { allocator::alloc(size, align) }
 }
 
 #[no_mangle]
-pub extern "C" fn __rust_dealloc(_ptr: *mut u8, _size: usize, _align: usize) {}
+pub unsafe extern "C" fn __rust_dealloc(_ptr: *mut u8, _size: usize, _align: usize) {}
 
 #[no_mangle]
-pub extern "C" fn __rust_realloc(_ptr: *mut u8, _old_size: usize, _align: usize, _new_size: usize) -> *mut u8 {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __rust_realloc(
+    _ptr: *mut u8,
+    _old_size: usize,
+    align: usize,
+    new_size: usize,
+) -> *mut u8 {
+    unsafe { allocator::alloc(new_size, align) }
 }
 
 #[no_mangle]
-pub extern "C" fn __rust_alloc_zeroed(_size: usize, _align: usize) -> *mut u8 {
-    core::ptr::null_mut()
+pub unsafe extern "C" fn __rust_alloc_zeroed(size: usize, align: usize) -> *mut u8 {
+    unsafe { allocator::alloc_zeroed(size, align) }
 }
