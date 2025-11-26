@@ -1,5 +1,8 @@
 //! `string.h` implementation.
 //!
+//! This module implements the standard string operations library, providing functions for string
+//! copying, concatenation, comparison, searching, and other manipulations.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/string.h.html>.
 
 use core::{
@@ -141,21 +144,7 @@ pub unsafe extern "C" fn memmem(
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/memmove.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memmove(s1: *mut c_void, s2: *const c_void, n: size_t) -> *mut c_void {
-    if s2 < s1 as *const c_void {
-        // copy from end
-        let mut i = n;
-        while i != 0 {
-            i -= 1;
-            *(s1 as *mut u8).add(i) = *(s2 as *const u8).add(i);
-        }
-    } else {
-        // copy from beginning
-        let mut i = 0;
-        while i < n {
-            *(s1 as *mut u8).add(i) = *(s2 as *const u8).add(i);
-            i += 1;
-        }
-    }
+    ptr::copy(s2 as *const u8, s1 as *mut u8, n);
     s1
 }
 
@@ -177,9 +166,7 @@ pub unsafe extern "C" fn memrchr(
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/memset.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memset(s: *mut c_void, c: c_int, n: size_t) -> *mut c_void {
-    for i in 0..n {
-        *(s as *mut u8).add(i) = c as u8;
-    }
+    ptr::write_bytes(s as *mut u8, c as u8, n);
     s
 }
 
@@ -423,9 +410,43 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, n: size_t
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/strlen.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn strlen(s: *const c_char) -> size_t {
-    unsafe { NulTerminated::new(s) }
-        .map(|s| s.count())
-        .unwrap_or(0)
+    let mut ptr = s as *const u8;
+    let mut len = 0;
+    
+    // Align to usize
+    while (ptr as usize) % mem::size_of::<usize>() != 0 {
+        if *ptr == 0 {
+            return len;
+        }
+        ptr = ptr.add(1);
+        len += 1;
+    }
+
+    // Scan word by word
+    let mut word_ptr = ptr as *const usize;
+    const LO_MAGIC: usize = usize::MAX / 255;
+    const HI_MAGIC: usize = LO_MAGIC << 7;
+
+    loop {
+        let word = *word_ptr;
+        if (word.wrapping_sub(LO_MAGIC) & !word & HI_MAGIC) != 0 {
+            // Found a zero byte (or something that looks like it in high bits processing, 
+            // but for 0x8080... mask logic to work we need to be careful. 
+            // The standard trick: (x - 0x01) & ~x & 0x80
+            
+            // Let's use a simpler byte scan for the found word to be safe and correct regardless of endianness
+            ptr = word_ptr as *const u8;
+            for _ in 0..mem::size_of::<usize>() {
+                if *ptr == 0 {
+                    return len;
+                }
+                ptr = ptr.add(1);
+                len += 1;
+            }
+        }
+        word_ptr = word_ptr.add(1);
+        len += mem::size_of::<usize>();
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncat.html>.

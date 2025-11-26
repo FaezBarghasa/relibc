@@ -61,6 +61,9 @@ pub static mut environ: *mut *mut c_char = ptr::null_mut();
 
 pub static OUR_ENVIRON: RawCell<Vec<*mut c_char>> = RawCell::new(Vec::new());
 
+// TODO: When stable, use sync::LazyLock
+pub static AUXVS: RawCell<Option<Box<[[usize; 2]]>>> = RawCell::new(None);
+
 pub fn environ_iter() -> impl Iterator<Item = *mut c_char> + 'static {
     unsafe {
         let mut ptrs = environ;

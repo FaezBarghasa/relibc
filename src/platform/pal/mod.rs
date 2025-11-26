@@ -28,6 +28,10 @@ pub use self::socket::PalSocket;
 mod socket;
 
 /// Platform abstraction layer, a platform-agnostic abstraction over syscalls.
+///
+/// This trait defines the interface that must be implemented by the platform-specific backend
+/// (e.g., `linux` or `redox`). It covers standard POSIX system calls and other operating system
+/// services required by the C library.
 pub trait Pal {
     fn access(path: CStr, mode: c_int) -> Result<()>;
 
@@ -53,6 +57,8 @@ pub trait Pal {
     fn dup(fildes: c_int) -> Result<c_int>;
 
     fn dup2(fildes: c_int, fildes2: c_int) -> Result<c_int>;
+
+    fn dup3(fildes: c_int, fildes2: c_int, flags: c_int) -> Result<c_int>;
 
     unsafe fn execve(path: CStr, argv: *const *mut c_char, envp: *const *mut c_char) -> Result<()>;
     unsafe fn fexecve(

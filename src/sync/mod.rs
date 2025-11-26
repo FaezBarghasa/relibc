@@ -1,4 +1,7 @@
 //! Synchronization primitives.
+//!
+//! This module provides synchronization primitives such as mutexes, condition variables,
+//! read-write locks, semaphores, and barriers. It also includes low-level futex wrappers.
 
 // TODO: set this for entire crate when possible
 #![deny(unsafe_op_in_unsafe_fn)]

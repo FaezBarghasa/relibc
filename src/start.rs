@@ -208,6 +208,7 @@ pub unsafe extern "C" fn relibc_start_v1(
     }
 
     let auxvs = get_auxvs(sp.auxv().cast());
+    crate::platform::AUXVS.unsafe_set(Some(auxvs.clone()));
     crate::platform::init(auxvs);
 
     init_array();

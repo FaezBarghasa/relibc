@@ -1,4 +1,8 @@
 //! socket implementation for Redox, following http://pubs.opengroup.org/onlinepubs/7908799/xns/syssocket.h.html
+//!
+//! This module implements the `sys/socket.h` header, providing functions for socket operations,
+//! including creating sockets, binding addresses, listening for connections, accepting connections,
+//! and sending/receiving data.
 
 use core::{mem, ptr};
 

@@ -1,4 +1,7 @@
 //! wchar implementation for Redox, following http://pubs.opengroup.org/onlinepubs/7908799/xsh/wchar.h.html
+//!
+//! This module implements the `wchar.h` header, providing functions for wide character and wide string
+//! manipulation, including formatted I/O, string conversion, and character classification.
 
 use core::{char, ffi::VaList as va_list, mem, ptr, slice, usize};
 

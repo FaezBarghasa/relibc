@@ -1,5 +1,8 @@
 //! `fcntl.h` implementation.
 //!
+//! This module implements the `fcntl.h` header, providing functions for file control operations,
+//! such as duplicating file descriptors, setting file status flags, and managing file locks.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/fcntl.h.html>.
 
 #![deny(unsafe_op_in_unsafe_fn)]

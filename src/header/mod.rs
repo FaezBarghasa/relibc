@@ -95,9 +95,43 @@ pub mod sys_time;
 #[deprecated]
 pub mod sys_timeb;
 //pub mod sys_times;
+#[cfg(target_arch = "aarch64")]
 pub mod arch_aarch64_user;
+
+#[cfg(any(target_arch = "arm", target_arch = "armv7"))]
+#[path = "arch_arm_user/mod.rs"]
+pub mod arch_arm_user;
+
+#[cfg(target_arch = "riscv64")]
 pub mod arch_riscv64_user;
+
+#[cfg(target_arch = "riscv32")]
+#[path = "arch_riscv32_user/mod.rs"]
+pub mod arch_riscv32_user;
+
+#[cfg(target_arch = "x86_64")]
 pub mod arch_x64_user;
+
+#[cfg(target_arch = "x86")]
+#[path = "arch_x86_user/mod.rs"]
+pub mod arch_x86_user;
+
+#[cfg(target_arch = "hexagon")]
+#[path = "arch_hexagon_user/mod.rs"]
+pub mod arch_hexagon_user;
+
+#[cfg(target_arch = "mips")]
+#[path = "arch_mips_user/mod.rs"]
+pub mod arch_mips_user;
+
+#[cfg(target_arch = "s390x")]
+#[path = "arch_s390x_user/mod.rs"]
+pub mod arch_s390x_user;
+
+#[cfg(all(target_arch = "powerpc64", target_endian = "little"))]
+#[path = "arch_ppc64_user/mod.rs"]
+pub mod arch_ppc64_user;
+
 #[cfg(not(target_arch = "x86"))] // TODO: x86
 pub mod sys_procfs;
 pub mod sys_random;

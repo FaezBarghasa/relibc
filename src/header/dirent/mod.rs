@@ -1,5 +1,8 @@
 //! `dirent.h` implementation.
 //!
+//! This module implements the `dirent.h` header, providing functions for directory stream operations
+//! such as opening, reading, and closing directories.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/dirent.h.html>.
 
 #![deny(unsafe_op_in_unsafe_fn)]

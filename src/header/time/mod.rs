@@ -1,5 +1,8 @@
 //! `time.h` implementation.
 //!
+//! This module implements the standard `time.h` header, providing functions for manipulating time
+//! and date, including reading the system clock, formatting dates, and managing timers.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/time.h.html>.
 
 use crate::{

@@ -20,6 +20,29 @@ CROSS_TARGET ?=
 CARGO_FLAGS :=
 ifneq ($(CROSS_TARGET),)
 	CARGO_FLAGS += --target $(CROSS_TARGET)
+	# If CROSS_TARGET is set, try to find the appropriate tools if not already set
+	# This is a rough heuristic and can be overridden by setting the variables directly
+	ifeq ($(CC),gcc)
+		CC := $(CROSS_TARGET)-gcc
+	endif
+	ifeq ($(AR),ar)
+		AR := $(CROSS_TARGET)-ar
+	endif
+	ifeq ($(LD),ld)
+		LD := $(CROSS_TARGET)-ld
+	endif
+	ifeq ($(OBJCOPY),objcopy)
+		OBJCOPY := $(CROSS_TARGET)-objcopy
+	endif
+	ifeq ($(STRIP),strip)
+		STRIP := $(CROSS_TARGET)-strip
+	endif
+	ifeq ($(NM),nm)
+		NM := $(CROSS_TARGET)-nm
+	endif
+	ifeq ($(RANLIB),ranlib)
+		RANLIB := $(CROSS_TARGET)-ranlib
+	endif
 endif
 
 # Default target is release

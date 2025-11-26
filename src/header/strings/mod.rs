@@ -1,5 +1,9 @@
 //! `strings.h` implementation.
 //!
+//! This module implements the `strings.h` header, which provides string operations that are not
+//! part of the `string.h` header, such as case-insensitive string comparisons and bit-string
+//! manipulation.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/strings.h.html>.
 
 // TODO: set this for entire crate when possible

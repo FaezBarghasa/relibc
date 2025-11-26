@@ -1,5 +1,9 @@
 //! `stdlib.h` implementation.
 //!
+//! This module implements the standard `stdlib.h` interface, providing general purpose functions
+//! including dynamic memory management, random number generation, communication with the environment,
+//! integer arithmetics, searching, sorting and converting.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/stdlib.h.html>.
 
 use core::{convert::TryFrom, intrinsics, iter, mem, ptr, slice};
@@ -1029,13 +1033,13 @@ pub unsafe extern "C" fn qsort(
         if nel > 0 {
             // XXX: maybe try to do mergesort/timsort first and fallback to introsort if memory
             //      allocation fails?  not sure what is ideal
-            sort::introsort(base as *mut c_char, nel, width, comp);
+            sort::introsort(base as *mut c_char, nel, width, |a, b| comp(a, b));
         }
     }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/qsort.html>.
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn qsort_r(
     base: *mut c_void,
     nel: size_t,
@@ -1043,7 +1047,11 @@ pub unsafe extern "C" fn qsort_r(
     compar: Option<extern "C" fn(*const c_void, *const c_void, *mut c_void) -> c_int>,
     arg: *mut c_void,
 ) {
-    unimplemented!();
+    if let Some(comp) = compar {
+        if nel > 0 {
+            sort::introsort(base as *mut c_char, nel, width, |a, b| comp(a, b, arg));
+        }
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/quick_exit.html>.
@@ -1189,9 +1197,13 @@ pub unsafe extern "C" fn realpath(pathname: *const c_char, resolved: *mut c_char
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/getenv.html>.
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn secure_getenv(name: *const c_char) -> *mut c_char {
-    unimplemented!();
+    let secure = crate::header::sys_auxv::getauxval(crate::platform::auxv_defs::AT_SECURE as _);
+    if secure != 0 {
+        return ptr::null_mut();
+    }
+    getenv(name)
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/drand48.html>.

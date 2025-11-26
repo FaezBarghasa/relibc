@@ -1,4 +1,7 @@
 //! stdio implementation for Redox, following http://pubs.opengroup.org/onlinepubs/7908799/xsh/stdio.h.html
+//!
+//! This module implements the standard I/O library, providing functions for file and console I/O,
+//! string formatting, and buffer management.
 
 use alloc::{
     borrow::{Borrow, BorrowMut},

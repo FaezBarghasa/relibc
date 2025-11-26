@@ -1,16 +1,18 @@
 use crate::platform::types::*;
 
-pub unsafe fn introsort(
+pub unsafe fn introsort<F>(
     base: *mut c_char,
     nel: size_t,
     width: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) {
+    mut comp: F,
+) where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     /*TODO: introsort is much faster than insertion sort, but is currently broken
     let maxdepth = 2 * log2(nel);
     introsort_helper(base, nel, width, maxdepth, comp);
     */
-    insertion_sort(base, nel, width, comp);
+    insertion_sort(base, nel, width, &mut comp);
 }
 
 // NOTE: if num is 0, the result should be considered undefined
@@ -27,13 +29,15 @@ fn log2(num: size_t) -> size_t {
     max_bits - num.to_le().leading_zeros() as size_t
 }
 
-unsafe fn introsort_helper(
+unsafe fn introsort_helper<F>(
     mut base: *mut c_char,
     mut nel: size_t,
     width: size_t,
     mut maxdepth: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) {
+    comp: &mut F,
+) where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     const THRESHOLD: size_t = 8;
 
     // this loop is a trick to save stack space because TCO is not a thing in Rustland
@@ -65,12 +69,14 @@ unsafe fn introsort_helper(
     }
 }
 
-unsafe fn insertion_sort(
+unsafe fn insertion_sort<F>(
     base: *mut c_char,
     nel: size_t,
     width: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) {
+    comp: &mut F,
+) where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     for i in 0..nel {
         for j in (0..i).rev() {
             let current = unsafe { base.add(j * width) };
@@ -84,12 +90,14 @@ unsafe fn insertion_sort(
     }
 }
 
-unsafe fn heapsort(
+unsafe fn heapsort<F>(
     base: *mut c_char,
     nel: size_t,
     width: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) {
+    comp: &mut F,
+) where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     heapify(base, nel, width, comp);
 
     let mut end = nel - 1;
@@ -101,12 +109,14 @@ unsafe fn heapsort(
     }
 }
 
-unsafe fn heapify(
+unsafe fn heapify<F>(
     base: *mut c_char,
     nel: size_t,
     width: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) {
+    comp: &mut F,
+) where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     // we start at the last parent in the heap (the parent of the last child)
     let last_parent = (nel - 2) / 2;
 
@@ -115,13 +125,15 @@ unsafe fn heapify(
     }
 }
 
-unsafe fn heap_sift_down(
+unsafe fn heap_sift_down<F>(
     base: *mut c_char,
     start: size_t,
     end: size_t,
     width: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) {
+    comp: &mut F,
+) where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     // get the left child of the node at the given index
     let left_child = |idx| 2 * idx + 1;
 
@@ -155,12 +167,15 @@ unsafe fn heap_sift_down(
 }
 
 #[inline]
-unsafe fn partition(
+unsafe fn partition<F>(
     base: *mut c_char,
     nel: size_t,
     width: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) -> (size_t, size_t) {
+    comp: &mut F,
+) -> (size_t, size_t)
+where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     // calculate the median of the first, middle, and last elements and use it as the pivot
     // to do fewer comparisons, also swap the elements into their correct positions
     let mut pivot = median_of_three(base, nel, width, comp);
@@ -198,12 +213,15 @@ unsafe fn partition(
     (i, n)
 }
 
-unsafe fn median_of_three(
+unsafe fn median_of_three<F>(
     base: *mut c_char,
     nel: size_t,
     width: size_t,
-    comp: extern "C" fn(*const c_void, *const c_void) -> c_int,
-) -> size_t {
+    comp: &mut F,
+) -> size_t
+where
+    F: FnMut(*const c_void, *const c_void) -> c_int,
+{
     let pivot = nel / 2;
 
     let mid = unsafe { base.add(pivot * width) };

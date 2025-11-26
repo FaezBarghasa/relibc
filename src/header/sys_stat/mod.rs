@@ -1,4 +1,7 @@
 //! stat implementation for Redox, following http://pubs.opengroup.org/onlinepubs/7908799/xsh/sysstat.h.html
+//!
+//! This module implements the `sys/stat.h` header, defining data structures and functions for
+//! obtaining file status (metadata) such as size, permissions, and ownership.
 
 use crate::{
     c_str::CStr,

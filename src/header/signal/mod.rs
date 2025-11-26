@@ -1,4 +1,7 @@
 //! signal implementation for Redox, following http://pubs.opengroup.org/onlinepubs/7908799/xsh/signal.h.html
+//!
+//! This module implements the `signal.h` header, providing facilities for handling signals,
+//! including signal handlers, signal masks, and sending signals to processes.
 
 use core::{arch::global_asm, mem, ptr};
 

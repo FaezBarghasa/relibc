@@ -221,6 +221,15 @@ impl Pal for Sys {
         Ok(syscall::dup2(fd1 as usize, fd2 as usize, &[])? as c_int)
     }
 
+    fn dup3(fd1: c_int, fd2: c_int, flags: c_int) -> Result<c_int> {
+        // TODO: handle flags
+        if flags != 0 {
+            Err(Errno(EINVAL))
+        } else {
+            Ok(syscall::dup2(fd1 as usize, fd2 as usize, &[])? as c_int)
+        }
+    }
+
     fn exit(status: c_int) -> ! {
         let _ = redox_rt::sys::posix_exit(status);
         loop {}

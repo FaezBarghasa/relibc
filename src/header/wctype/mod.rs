@@ -1,5 +1,8 @@
 //! `wctype.h` implementation.
 //!
+//! This module implements the `wctype.h` header, providing functions for wide character classification
+//! and mapping.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/wctype.h.html>.
 
 // TODO: set this for entire crate when possible

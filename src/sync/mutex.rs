@@ -10,6 +10,7 @@ pub(crate) const UNLOCKED: c_int = 0;
 pub(crate) const LOCKED: c_int = 1;
 pub(crate) const WAITING: c_int = 2;
 
+/// A mutual exclusion primitive useful for protecting shared data.
 pub struct Mutex<T> {
     pub(crate) lock: AtomicLock,
     content: UnsafeCell<T>,

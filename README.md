@@ -33,6 +33,16 @@ Relibc uses it as backend in `src/platform/redox`, and it's intended to eventual
 - `src/sync` - Synchronization primitives
 - `tests` - C tests (each MR needs to give success in all of them)
 
+## New Features
+
+### `qsort_r`
+
+Relibc now supports `qsort_r`, a reentrant version of `qsort` that allows passing an argument to the comparison function. This is available in `<stdlib.h>`.
+
+### `secure_getenv`
+
+Relibc now implements `secure_getenv`. This function is similar to `getenv`, but returns `NULL` in cases where the environment might be untrusted (e.g., when the program is running with `setuid` or `setgid` privileges). This implementation relies on the `AT_SECURE` auxiliary vector entry.
+
 ## Download the sources
 
 To download the relibc sources run the following command:
@@ -181,6 +191,12 @@ Before starting to contribute, read [this](CONTRIBUTING.md) document.
 - x86_64 (Intel/AMD)
 - aarch64 (ARM64)
 - riscv64gc (RISC-V)
+- arm (ARM32)
+- riscv32 (RISC-V 32-bit)
+- hexagon
+- mips
+- s390x
+- powerpc64le
 
 ## Funding - _Unix-style Signals and Process Management_
 

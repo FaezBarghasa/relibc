@@ -1,5 +1,8 @@
 //! `ctype.h` implementation.
 //!
+//! This module implements the `ctype.h` header, providing functions for character classification
+//! and case conversion.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/ctype.h.html>.
 
 // TODO: set this for entire crate when possible

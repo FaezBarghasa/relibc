@@ -1,5 +1,8 @@
 //! `unistd.h` implementation.
 //!
+//! This module implements the standard `unistd.h` interface, which provides access to various
+//! POSIX operating system API functions.
+//!
 //! See <https://pubs.opengroup.org/onlinepubs/9799919799/basedefs/unistd.h.html>.
 
 use core::{
@@ -36,8 +39,9 @@ pub use crate::header::stdio::{ctermid, cuserid};
 //pub use crate::header::fcntl::{faccessat, fchownat, fexecve, linkat, readlinkat, symlinkat, unlinkat};
 
 use super::{
-    errno::{E2BIG, EINVAL, ENOMEM},
+    errno::{E2BIG, EIO, EINVAL, ENOMEM},
     stdio::snprintf,
+    sys_random,
 };
 
 mod brk;
@@ -274,9 +278,9 @@ pub extern "C" fn dup2(fildes: c_int, fildes2: c_int) -> c_int {
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/dup.html>.
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub extern "C" fn dup3(fildes: c_int, fildes2: c_int, flag: c_int) -> c_int {
-    unimplemented!();
+    Sys::dup3(fildes, fildes2, flag).or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/encrypt.html>.
@@ -519,9 +523,25 @@ pub extern "C" fn getegid() -> gid_t {
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/getentropy.html>.
-// #[unsafe(no_mangle)]
-pub extern "C" fn getentropy(buffer: *mut c_void, length: size_t) -> c_int {
-    unimplemented!();
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn getentropy(buffer: *mut c_void, length: size_t) -> c_int {
+    if length > 256 {
+        platform::ERRNO.set(crate::header::errno::EIO);
+        return -1;
+    }
+    let mut flags = 0;
+    #[cfg(target_os = "linux")]
+    {
+        flags |= crate::header::sys_random::GRND_RANDOM;
+    }
+    let res = Sys::getrandom(
+        slice::from_raw_parts_mut(buffer.cast::<u8>(), length),
+        flags
+    );
+    match res {
+        Ok(_) => 0,
+        Err(_) => -1,
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/geteuid.html>.
@@ -553,9 +573,10 @@ pub unsafe extern "C" fn getgroups(size: c_int, list: *mut gid_t) -> c_int {
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/gethostid.html>.
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub extern "C" fn gethostid() -> c_long {
-    unimplemented!();
+    // TODO: Read from /etc/hostid, falling back to hostname hash
+    0
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/gethostname.html>.
@@ -768,15 +789,33 @@ pub extern "C" fn lseek(fildes: c_int, offset: off_t, whence: c_int) -> off_t {
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/nice.html>.
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub extern "C" fn nice(incr: c_int) -> c_int {
-    unimplemented!();
+    let mut prio = Sys::getpriority(sys_resource::PRIO_PROCESS, 0);
+    if let Err(Errno(e)) = prio {
+        platform::ERRNO.set(e);
+        return -1;
+    }
+    let current_prio = prio.unwrap();
+    // TODO: checks for overflow/underflow of nice value (usually -20 to 19)
+    let new_prio = current_prio + incr;
+    if let Err(Errno(e)) = Sys::setpriority(sys_resource::PRIO_PROCESS, 0, new_prio) {
+        platform::ERRNO.set(e);
+        return -1;
+    }
+    Sys::getpriority(sys_resource::PRIO_PROCESS, 0).or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/pause.html>.
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub extern "C" fn pause() -> c_int {
-    unimplemented!();
+    let mut mask = crate::header::signal::sigset_t::default();
+    // Get current mask
+    if unsafe { crate::header::signal::sigprocmask(crate::header::signal::SIG_SETMASK, ptr::null(), &mut mask) } < 0 {
+        return -1;
+    }
+    // Wait for signal
+    unsafe { crate::header::signal::sigsuspend(&mask) }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/pipe.html>.

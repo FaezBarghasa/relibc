@@ -1,4 +1,8 @@
 //! Dynamic loading and linking.
+//!
+//! This module implements the dynamic linker/loader (ld.so), responsible for loading dynamic
+//! shared objects (DSOs) and resolving symbols at runtime. It handles TLS initialization,
+//! library loading, and symbol relocation.
 
 // FIXME(andypython): remove this when #![allow(warnings, unused_variables)] is
 // dropped from src/lib.rs.

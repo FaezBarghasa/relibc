@@ -1,4 +1,8 @@
 //! pthread.h implementation for Redox, following https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/pthread.h.html
+//!
+//! This module implements the POSIX threads (pthreads) library, providing support for creating and
+//! managing threads, mutexes, condition variables, read-write locks, and other synchronization
+//! primitives.
 
 use alloc::collections::LinkedList;
 use core::{cell::Cell, ptr::NonNull};
