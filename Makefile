@@ -107,6 +107,8 @@ headers: $(BUILD)/librelibc.a $(BUILD)/include
 	if [ -d "$(CARGO_BUILD_DIR)/include" ]; then \
 		cp -r $(CARGO_BUILD_DIR)/include/* $(BUILD)/include/; \
 	fi
+	# Copy openlibm headers
+	cp $(BUILD)/openlibm/include/*.h $(BUILD)/include/
 
 # 3. Compile OpenLibm
 # Depends on 'headers' to ensure $(BUILD)/include is fully populated with assert.h etc.

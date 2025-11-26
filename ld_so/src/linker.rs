@@ -178,6 +178,10 @@ impl Linker {
         }
     }
 
+    pub fn get_entry_point(&self) -> usize {
+        self.objects.first().map_or(0, |dso| dso.entry_point)
+    }
+
     fn load_dependencies(&mut self) {
         // Stub: BFS load DT_NEEDED
     }

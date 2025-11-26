@@ -6,7 +6,7 @@
 
 #![no_std]
 #![feature(naked_functions)]
-#![feature(link_args)]
+//#![feature(link_args)]
 #![allow(clippy::missing_safety_doc)]
 
 extern crate alloc;
@@ -31,6 +31,7 @@ pub mod versioning;
 use core::arch::global_asm;
 use crate::linker::Linker;
 use crate::dso::DSO;
+use crate::debug;
 
 // Define the entry point _start.
 #[cfg(target_arch = "x86_64")]
@@ -39,14 +40,14 @@ global_asm!(
     "_start:",
     "mov rdi, rsp", // Arg 1: Stack Pointer
     "call linker_entry",
-    "ud2" 
+    "ud2"
 );
 
 #[cfg(target_arch = "aarch64")]
 global_asm!(
     ".globl _start",
     "_start:",
-    "mov x0, sp", 
+    "mov x0, sp",
     "bl linker_entry",
     "brk #1"
 );
@@ -55,7 +56,7 @@ global_asm!(
 global_asm!(
     ".globl _start",
     "_start:",
-    "mv a0, sp", 
+    "mv a0, sp",
     "call linker_entry",
     "unimp"
 );
@@ -63,9 +64,15 @@ global_asm!(
 /// The Rust Entry Point.
 #[no_mangle]
 pub unsafe extern "C" fn linker_entry(sp: *const usize) -> ! {
-    let load_base = get_load_base();
+    let main_dso = DSO::new_executable(sp);
+    let load_base = main_dso.base_addr;
 
     if let Err(e) = verify::verify_self_integrity(load_base) {
+        debug::dprintln(e);
+        core::intrinsics::abort();
+    }
+    if let Err(e) = verify::verify_bss_relocations() {
+        debug::dprintln(e);
         core::intrinsics::abort();
     }
 
@@ -78,21 +85,9 @@ pub unsafe extern "C" fn linker_entry(sp: *const usize) -> ! {
     // 3. Initialize Linker with Env vars
     let mut linker = Linker::new(envp);
 
-    let main_dso = DSO::new_executable(sp);
-    
     linker.link(main_dso);
 
-    enter_entry_point(sp, get_entry_point(sp));
-}
-
-#[inline(always)]
-unsafe fn get_load_base() -> usize {
-    0 
-}
-
-#[inline(always)]
-unsafe fn get_entry_point(sp: *const usize) -> usize {
-    0 
+    enter_entry_point(sp, linker.get_entry_point());
 }
 
 #[cfg(target_arch = "x86_64")]

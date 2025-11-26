@@ -134,10 +134,9 @@ To test on Redox do the following steps:
 - Run the following commands to rebuild relibc with your changes, update the `relibc-tests` recipe and update your QEMU image:
 
 ```sh
-touch relibc
-```
-
-```sh
+# The 'touch' command updates the modification time of the relibc directory,
+# ensuring that 'make' recompiles it.
+touch relibc && make prefix cr.relibc-tests image
 make prefix cr.relibc-tests image
 ```
 

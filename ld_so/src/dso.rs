@@ -37,22 +37,39 @@ impl DSO {
     /// Create a DSO representing the main executable loaded by the kernel.
     /// `sp` is the stack pointer at entry, used to find AT_PHDR/AT_PHNUM if needed.
     pub unsafe fn new_executable(sp: *const usize) -> Self {
-        // In a real implementation, walk `sp` to find Aux Vector (AT_PHDR, AT_PHNUM, AT_BASE).
-        // For this contract, we assume we can get these or have a bootstrap mechanism.
+        let argc = *sp;
+        let argv = sp.add(1);
+        let mut envp = argv.add(argc + 1);
+        while *envp != 0 {
+            envp = envp.add(1);
+        }
+        envp = envp.add(1);
 
-        // Placeholder values for bootstrapping
-        let base_addr = 0;
-        let entry_point = 0;
-        let name = String::from("main");
+        let auxv = envp as *const elf::Auxv;
 
-        // We would parse the dynamic section here.
-        // Since we can't easily walk the stack in this snippet without the auxv parser code,
-        // we return a minimal DSO to allow the linker structure to compile.
+        let mut phdr = 0 as *const elf::Phdr;
+        let mut phnum = 0;
+        let mut entry = 0;
+
+        let mut aux = auxv;
+        while (*aux).a_type != elf::AT_NULL {
+            match (*aux).a_type {
+                elf::AT_PHDR => phdr = (*aux).a_un.a_ptr as *const elf::Phdr,
+                elf::AT_PHNUM => phnum = (*aux).a_un.a_val,
+                elf::AT_ENTRY => entry = (*aux).a_un.a_val,
+                _ => (),
+            }
+            aux = aux.add(1);
+        }
+
+        let phdrs = slice::from_raw_parts(phdr, phnum);
+        let (dynamic, base_addr) = Self::parse_phdrs(phdrs);
+
         Self {
-            name,
+            name: String::from("main"),
             base_addr,
-            entry_point,
-            dynamic: None,
+            entry_point: entry,
+            dynamic,
             sym_table: None,
             str_table: None,
             gnu_hash: None,
@@ -68,6 +85,34 @@ impl DSO {
             tls_align: 0,
             tls_image: None,
         }
+    }
+
+    unsafe fn parse_phdrs(phdrs: &[elf::Phdr]) -> (Option<&'static [elf::Dyn]>, usize) {
+        let mut dynamic = None;
+        let mut base_addr = 0;
+
+        // Find PT_LOAD to determine base address
+        for phdr in phdrs {
+            if phdr.p_type == elf::PT_LOAD && phdr.p_offset == 0 {
+                base_addr = phdr.p_vaddr;
+                break;
+            }
+        }
+
+        // Find PT_DYNAMIC
+        for phdr in phdrs {
+            if phdr.p_type == elf::PT_DYNAMIC {
+                let mut dyn_ptr = (base_addr + phdr.p_vaddr) as *const elf::Dyn;
+                let mut count = 0;
+                while (*dyn_ptr).d_tag != elf::DT_NULL {
+                    count += 1;
+                    dyn_ptr = dyn_ptr.add(1);
+                }
+                dynamic = Some(slice::from_raw_parts((base_addr + phdr.p_vaddr) as *const elf::Dyn, count));
+                break;
+            }
+        }
+        (dynamic, base_addr)
     }
 
     /// Run the initialization functions (DT_INIT / DT_INIT_ARRAY).
