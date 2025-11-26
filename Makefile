@@ -78,7 +78,8 @@ CPPFLAGS ?=
 .PHONY: all clean install install-headers install-libs list-headers test libs headers
 
 # Default target
-all: libs $(BUILD)/crt0.o
+# Default target
+all: libs $(BUILD)/crt0.o $(BUILD)/crti.o $(BUILD)/crtn.o
 
 # Target specifically for building libraries
 libs: $(BUILD)/libc.a $(BUILD)/libc.so
@@ -129,9 +130,25 @@ $(BUILD)/libc.so: $(BUILD)/librelibc.a $(BUILD)/openlibm/libopenlibm.a
 		-Wl,--whole-archive $(BUILD)/librelibc.a $(BUILD)/openlibm/libopenlibm.a -Wl,--no-whole-archive \
 		-lgcc
 
+RUSTC_FLAGS :=
+ifneq ($(CROSS_TARGET),)
+	RUSTC_FLAGS += --target $(CROSS_TARGET)
+endif
+ifeq ($(PROFILE),release)
+	RUSTC_FLAGS += -C opt-level=3
+endif
+
 $(BUILD)/crt0.o: src/crt0/src/lib.rs
 	mkdir -p $(BUILD)
-	rustc --crate-type object --emit obj=$@ $< $(CARGO_FLAGS)
+	rustc --crate-type lib --emit obj=$@ $< -C panic=abort $(RUSTC_FLAGS)
+
+$(BUILD)/crti.o: src/crti/src/lib.rs
+	mkdir -p $(BUILD)
+	rustc --crate-type lib --emit obj=$@ $< -C panic=abort $(RUSTC_FLAGS)
+
+$(BUILD)/crtn.o: src/crtn/src/lib.rs
+	mkdir -p $(BUILD)
+	rustc --crate-type lib --emit obj=$@ $< -C panic=abort $(RUSTC_FLAGS)
 
 install: install-headers install-libs
 
@@ -139,15 +156,22 @@ install-headers: headers
 	mkdir -p $(DESTDIR)/include
 	cp -r $(BUILD)/include/* $(DESTDIR)/include/
 
-install-libs: libs $(BUILD)/crt0.o
+install-libs: libs $(BUILD)/crt0.o $(BUILD)/crti.o $(BUILD)/crtn.o
 	mkdir -p $(DESTDIR)/lib
 	cp $(BUILD)/libc.a $(DESTDIR)/lib/
 	cp $(BUILD)/libc.so $(DESTDIR)/lib/
 	cp $(BUILD)/crt0.o $(DESTDIR)/lib/
+	cp $(BUILD)/crti.o $(DESTDIR)/lib/
+	cp $(BUILD)/crtn.o $(DESTDIR)/lib/
+
+sysroot: all
+	rm -rf sysroot
+	mkdir -p sysroot
+	$(MAKE) install DESTDIR=$(abspath sysroot)
 
 clean:
 	cargo clean
-	rm -rf $(BUILD)
+	rm -rf $(BUILD) sysroot
 
 test: all
 	$(MAKE) -C tests all
