@@ -2,28 +2,39 @@
 //! The Dynamic Linker Orchestrator.
 //! Manages the loading graph, symbol resolution, relocation, and TLS initialization.
 
-use alloc::vec::Vec;
-use alloc::string::{String, ToString};
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{mem, ptr, slice};
 
-use crate::header::elf;
-use crate::dso::DSO;
-use crate::reloc;
-use crate::tcb::Tcb;
-use crate::tls;
-use crate::linux_parity::{find_symbol_linux_style, LookupResult};
-use crate::versioning::{VersionReq, VersionData};
+use crate::{
+    dso::DSO,
+    header::elf,
+    linux_parity::{LookupResult, find_symbol_linux_style},
+    reloc,
+    tcb::Tcb,
+    tls,
+    versioning::{VersionData, VersionReq},
+};
 
 /// Default extra bytes allocated in the Static TLS block for runtime-loaded libraries.
 /// This allows `dlopen`'d libraries to use the Initial Exec (IE) model.
 const DEFAULT_STATIC_TLS_SURPLUS: usize = 2048;
 
-extern "C" {
+unsafe extern "C" {
     fn open(path: *const i8, flags: i32, mode: i32) -> i32;
     fn close(fd: i32) -> i32;
     fn fstat(fd: i32, buf: *mut u8) -> i32;
     fn mmap(addr: *mut u8, len: usize, prot: i32, flags: i32, fd: i32, offset: i64) -> *mut u8;
 }
+
+/*
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    core::intrinsics::abort()
+}
+*/
 
 pub struct Linker {
     objects: Vec<DSO>,
@@ -59,13 +70,17 @@ impl Linker {
     /// Basic parser for GLIBC_TUNABLES environment variable.
     /// Looks for `glibc.rtld.optional_static_tls=SIZE`.
     fn parse_tunables(envp: *const *const i8) -> Option<usize> {
-        if envp.is_null() { return None; }
+        if envp.is_null() {
+            return None;
+        }
 
         unsafe {
             let mut i = 0;
             loop {
                 let entry_ptr = *envp.add(i);
-                if entry_ptr.is_null() { break; }
+                if entry_ptr.is_null() {
+                    break;
+                }
 
                 // Simple string checking (no CStr/CString available comfortably yet)
                 // We need to check if string starts with "GLIBC_TUNABLES="
@@ -133,7 +148,9 @@ impl Linker {
             while *cursor != 0 && *cursor != b':' as i8 {
                 cursor = cursor.add(1);
             }
-            if *cursor == 0 { break; }
+            if *cursor == 0 {
+                break;
+            }
             cursor = cursor.add(1); // Skip ':'
         }
 
@@ -174,7 +191,9 @@ impl Linker {
 
         // 5. Initialize
         for i in (0..self.objects.len()).rev() {
-            unsafe { self.objects[i].run_init(); }
+            unsafe {
+                self.objects[i].run_init();
+            }
         }
     }
 
@@ -193,7 +212,9 @@ impl Linker {
 
         // 1. Layout Initial Modules
         for obj in &mut self.objects {
-            if obj.tls_size == 0 { continue; }
+            if obj.tls_size == 0 {
+                continue;
+            }
 
             let align_mask = obj.tls_align - 1;
             self.tls_offset = (self.tls_offset + align_mask) & !align_mask;
@@ -249,7 +270,9 @@ impl Linker {
         };
 
         for obj in &self.objects {
-            if obj.tls_size == 0 { continue; }
+            if obj.tls_size == 0 {
+                continue;
+            }
 
             let dest_addr = block_start + obj.tls_offset;
             let dest = dest_addr as *mut u8;
@@ -276,12 +299,19 @@ impl Linker {
         for (r_type, sym_idx, offset, addend) in rels {
             let reloc_addr = obj.base_addr + offset;
 
-            if unsafe { reloc::relocate(
-                r_type, 0, 0, reloc_addr, addend, obj.base_addr,
-                obj.tls_module_id,
-                obj.tls_offset,
-                self.static_tls_size
-            ) } {
+            if unsafe {
+                reloc::relocate(
+                    r_type,
+                    0,
+                    0,
+                    reloc_addr,
+                    addend,
+                    obj.base_addr,
+                    obj.tls_module_id,
+                    obj.tls_offset,
+                    self.static_tls_size,
+                )
+            } {
                 continue;
             }
 
@@ -304,7 +334,7 @@ impl Linker {
                         obj.base_addr,
                         tls_id,
                         tls_off,
-                        self.static_tls_size
+                        self.static_tls_size,
                     ) {
                         reloc::relocate_copy(r_type, res.value, reloc_addr, res.size);
                     }
@@ -327,7 +357,7 @@ impl Linker {
                     dso.str_table(),
                     dso.gnu_hash(),
                     dso.sysv_hash(),
-                    dso.version_data(),
+                    dso.version_data().map(|vd| vd.versym),
                     dso.base_addr,
                 ) {
                     return Some((res, dso.tls_module_id, dso.tls_offset));

@@ -33,9 +33,30 @@ pub mod gnu_hash;
 pub mod linux_parity;
 pub mod versioning;
 
+use crate::{dso::DSO, linker::Linker};
 use core::arch::global_asm;
-use crate::linker::Linker;
-use crate::dso::DSO;
+
+// Global allocator using the custom allocator
+use core::alloc::{GlobalAlloc, Layout};
+
+struct RelibcAllocator;
+unsafe impl GlobalAlloc for RelibcAllocator {
+    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
+        allocator::alloc(layout.size(), layout.align())
+    }
+    unsafe fn dealloc(&self, ptr: *mut u8, _layout: Layout) {
+        // No deallocation in this simple allocator
+    }
+}
+
+#[global_allocator]
+static GLOBAL: RelibcAllocator = RelibcAllocator;
+
+// Panic handler (uncommented)
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    core::intrinsics::abort()
+}
 
 // Define the entry point _start.
 #[cfg(target_arch = "x86_64")]
@@ -66,7 +87,7 @@ global_asm!(
 );
 
 /// The Rust Entry Point.
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn linker_entry(sp: *const usize) -> ! {
     let main_dso = unsafe { DSO::new_executable(sp) };
     let load_base = main_dso.base_addr;
@@ -140,18 +161,18 @@ fn panic(_info: &core::panic::PanicInfo) -> ! {
 }
 */
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __dso_handle() {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __rust_alloc(size: usize, align: usize) -> *mut u8 {
     unsafe { allocator::alloc(size, align) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __rust_dealloc(_ptr: *mut u8, _size: usize, _align: usize) {}
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __rust_realloc(
     _ptr: *mut u8,
     _old_size: usize,
@@ -161,7 +182,7 @@ pub unsafe extern "C" fn __rust_realloc(
     unsafe { allocator::alloc(new_size, align) }
 }
 
-#[no_mangle]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn __rust_alloc_zeroed(size: usize, align: usize) -> *mut u8 {
     unsafe { allocator::alloc_zeroed(size, align) }
 }

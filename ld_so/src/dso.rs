@@ -4,13 +4,17 @@
 //! Represents a loaded ELF object (executable or library) in memory.
 //! Handles parsing of Program Headers, Dynamic Section, and Symbol Tables.
 
-use alloc::string::{String, ToString};
-use alloc::vec::Vec;
+use alloc::{
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{slice, str};
 
-use crate::header::elf;
-use crate::gnu_hash::GnuHash;
-use crate::versioning::{VersionData, VersionReq};
+use crate::{
+    gnu_hash::GnuHash,
+    header::elf,
+    versioning::{VersionData, VersionReq},
+};
 
 pub struct DSO {
     pub name: String,
@@ -19,7 +23,7 @@ pub struct DSO {
     pub dynamic: Option<&'static [elf::Dyn]>,
     pub sym_table: Option<&'static [elf::Sym]>,
     pub str_table: Option<&'static [u8]>,
-    pub gnu_hash: Option<GnuHash<'static>>,
+    pub gnu_hash: Option<GnuHash>,
     pub sysv_hash: Option<&'static [u32]>,
     pub versym: Option<&'static [u16]>,
     pub verdef: Option<*const elf::Verdef>,
@@ -108,7 +112,10 @@ impl DSO {
                     count += 1;
                     dyn_ptr = dyn_ptr.add(1);
                 }
-                dynamic = Some(slice::from_raw_parts((base_addr + phdr.p_vaddr) as *const elf::Dyn, count));
+                dynamic = Some(slice::from_raw_parts(
+                    (base_addr + phdr.p_vaddr) as *const elf::Dyn,
+                    count,
+                ));
                 break;
             }
         }
@@ -130,7 +137,9 @@ impl DSO {
 
     pub fn get_sym_name(&self, index: usize) -> Option<&str> {
         let sym = &self.sym_table?[index];
-        if sym.st_name == 0 { return None; }
+        if sym.st_name == 0 {
+            return None;
+        }
         let start = sym.st_name as usize;
         let slice = &self.str_table?[start..];
         let end = slice.iter().position(|&c| c == 0)?;
@@ -143,11 +152,21 @@ impl DSO {
     }
 
     // Accessors required by Linux Parity module
-    pub fn sym_table(&self) -> &[elf::Sym] { self.sym_table.unwrap_or(&[]) }
-    pub fn str_table(&self) -> &[u8] { self.str_table.unwrap_or(&[]) }
-    pub fn gnu_hash(&self) -> Option<&GnuHash<'static>> { self.gnu_hash.as_ref() }
-    pub fn sysv_hash(&self) -> Option<&[u32]> { self.sysv_hash }
-    pub fn base_addr(&self) -> usize { self.base_addr }
+    pub fn sym_table(&self) -> &[elf::Sym] {
+        self.sym_table.unwrap_or(&[])
+    }
+    pub fn str_table(&self) -> &[u8] {
+        self.str_table.unwrap_or(&[])
+    }
+    pub fn gnu_hash(&self) -> Option<&GnuHash> {
+        self.gnu_hash.as_ref()
+    }
+    pub fn sysv_hash(&self) -> Option<&[u32]> {
+        self.sysv_hash
+    }
+    pub fn base_addr(&self) -> usize {
+        self.base_addr
+    }
 
     pub fn version_data(&self) -> Option<VersionData<'static>> {
         if let (Some(versym), Some(str_tab)) = (self.versym, self.str_table) {
