@@ -26,6 +26,11 @@ mod lookaheadreader;
 mod utf8;
 mod wprintf;
 mod wscanf;
+mod wcsftime;
+
+pub trait WriteWchar {
+    fn write_wchar(&mut self, wc: wchar_t) -> io::Result<()>;
+}
 
 struct WcharWriter {
     buf: *mut wchar_t,
@@ -526,14 +531,19 @@ pub unsafe extern "C" fn wcscspn(wcs: *const wchar_t, set: *const wchar_t) -> si
     inner_wcsspn(wcs, set, true)
 }
 
-// #[unsafe(no_mangle)]
-pub extern "C" fn wcsftime(
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wcsftime(
     wcs: *mut wchar_t,
     maxsize: size_t,
     format: *const wchar_t,
-    timptr: *mut tm,
+    timeptr: *mut tm,
 ) -> size_t {
-    unimplemented!();
+    let ret = wcsftime::wcsftime(
+        &mut platform::StringWriter(wcs as *mut u16, maxsize),
+        format,
+        timeptr,
+    );
+    if ret < maxsize { ret } else { 0 }
 }
 
 #[unsafe(no_mangle)]
