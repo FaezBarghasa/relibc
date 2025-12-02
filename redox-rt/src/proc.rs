@@ -5,7 +5,7 @@ use core::{
 };
 
 use crate::{
-    DYNAMIC_PROC_INFO, RtTcb, StaticProcInfo,
+    c_rt, DYNAMIC_PROC_INFO, RtTcb, StaticProcInfo,
     arch::*,
     auxv_constants::*,
     auxv_defs::*,
@@ -734,7 +734,7 @@ impl<const UPPER: bool> FdGuard<UPPER> {
 
     #[inline]
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
-        syscall::write(self.fd, buf)
+        syscall_slice_impl!(write, self.fd, buf)
     }
 
     #[inline]
@@ -1015,7 +1015,11 @@ pub fn new_child_process(args: &ForkArgs<'_>) -> Result<NewChildProc> {
 
 pub unsafe fn make_init() -> (&'static FdGuardUpper, &'static FdGuardUpper) {
     let proc_fd = FdGuard::new(
-        syscall::open("/scheme/proc/init", syscall::O_CLOEXEC).expect("failed to create init"),
+        syscall::open(
+            c_rt::c!("/scheme/proc/init"),
+            syscall::O_CLOEXEC,
+        )
+        .expect("failed to create init"),
     )
     .to_upper()
     .unwrap();

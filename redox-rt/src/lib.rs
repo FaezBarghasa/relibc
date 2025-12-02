@@ -1,6 +1,6 @@
 #![no_std]
 #![allow(internal_features)]
-#![feature(core_intrinsics, int_roundings, slice_ptr_get, sync_unsafe_cell)]
+#![feature(asm_const, core_intrinsics, int_roundings, slice_ptr_get, sync_unsafe_cell)]
 #![forbid(unreachable_patterns)]
 
 use core::{
@@ -8,7 +8,8 @@ use core::{
     mem::{MaybeUninit, size_of},
 };
 
-use generic_rt::{ExpectTlsFree, GenericTcb};
+use c_rt::ExpectTlsFree;
+use generic_rt::GenericTcb;
 use syscall::Sigcontrol;
 
 use self::{
@@ -30,15 +31,16 @@ macro_rules! asmfunction(
         ", stringify!($name), ":
         ", $($asmstmt, "\n",)* "
             .size ", stringify!($name), ", . - ", stringify!($name), "
-        "), $($decl = $(sym $symname)?$(const $constval)?),*);
+        "), $($($decl = $(sym $symname)?$(const $constval)?),*)?);
 
-        unsafe extern "C" {
+        extern "C" {
             pub fn $name($($(_: $arg),*)?) $(-> $ret)?;
         }
     }
 );
 
 pub mod arch;
+pub mod c_rt;
 pub mod proc;
 
 // TODO: Replace auxvs with a non-stack-based interface, but keep getauxval for compatibility
@@ -69,35 +71,33 @@ impl RtTcb {
     }
 }
 
-pub type Tcb = GenericTcb<RtTcb>;
+pub type Tcb = GenericTcb<RtTcb, arch::TcbExtension>;
 
 /// OS and architecture specific code to activate TLS - Redox aarch64
 #[allow(unsafe_op_in_unsafe_fn)]
 #[cfg(target_arch = "aarch64")]
-pub unsafe fn tcb_activate(_tcb: &RtTcb, tls_end: usize, tls_len: usize) {
-    // Uses ABI page
-    let abi_ptr = tls_end - tls_len - 16;
-    core::ptr::write(abi_ptr as *mut usize, tls_end);
+pub unsafe fn tcb_activate(tcb: &Tcb) {
     core::arch::asm!(
         "msr tpidr_el0, {}",
-        in(reg) abi_ptr,
+        in(reg) tcb,
     );
 }
 
 /// OS and architecture specific code to activate TLS - Redox x86
 #[allow(unsafe_op_in_unsafe_fn)]
 #[cfg(target_arch = "x86")]
-pub unsafe fn tcb_activate(tcb: &RtTcb, tls_end: usize, _tls_len: usize) {
+pub unsafe fn tcb_activate(tcb: &Tcb) {
     let mut env = syscall::EnvRegisters::default();
 
     let file = tcb
+        .os_specific
         .thread_fd()
         .dup(b"regs/env")
         .expect_notls("failed to open handle for process registers");
 
     file.read(&mut env).expect_notls("failed to read gsbase");
 
-    env.gsbase = tls_end as u32;
+    env.gsbase = tcb.tls_end as u32;
 
     file.write(&env).expect_notls("failed to write gsbase");
 }
@@ -105,17 +105,18 @@ pub unsafe fn tcb_activate(tcb: &RtTcb, tls_end: usize, _tls_len: usize) {
 /// OS and architecture specific code to activate TLS - Redox x86_64
 #[allow(unsafe_op_in_unsafe_fn)]
 #[cfg(target_arch = "x86_64")]
-pub unsafe fn tcb_activate(tcb: &RtTcb, tls_end_and_tcb_start: usize, _tls_len: usize) {
+pub unsafe fn tcb_activate(tcb: &Tcb) {
     let mut env = syscall::EnvRegisters::default();
 
     let file = tcb
+        .os_specific
         .thread_fd()
         .dup(b"regs/env")
         .expect_notls("failed to open handle for process registers");
 
     file.read(&mut env).expect_notls("failed to read fsbase");
 
-    env.fsbase = tls_end_and_tcb_start as u64;
+    env.fsbase = tcb as *const Tcb as u64;
 
     file.write(&env).expect_notls("failed to write fsbase");
 }
@@ -123,15 +124,10 @@ pub unsafe fn tcb_activate(tcb: &RtTcb, tls_end_and_tcb_start: usize, _tls_len: 
 /// OS and architecture specific code to activate TLS - Redox riscv64
 #[allow(unsafe_op_in_unsafe_fn)]
 #[cfg(target_arch = "riscv64")]
-pub unsafe fn tcb_activate(_tcb: &RtTcb, tls_end: usize, tls_len: usize) {
-    // tp points to static tls block
-    // FIXME limited to a single initial master
-    let tls_start = tls_end - tls_len;
-    let abi_ptr = tls_start - 8;
-    core::ptr::write(abi_ptr as *mut usize, tls_end);
+pub unsafe fn tcb_activate(tcb: &Tcb) {
     core::arch::asm!(
         "mv tp, {}",
-        in(reg) tls_start
+        in(reg) tcb,
     );
 }
 
@@ -165,20 +161,8 @@ pub unsafe fn initialize_freestanding(this_thr_fd: FdGuardUpper) -> &'static FdG
     // Make sure to use ptr::write to prevent dropping the existing FdGuard
     page.os_specific.thr_fd.get().write(Some(this_thr_fd));
 
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
     unsafe {
-        let tcb_addr = page as *mut Tcb as usize;
-        tcb_activate(&page.os_specific, tcb_addr, 0)
-    }
-    #[cfg(target_arch = "aarch64")]
-    unsafe {
-        let abi_ptr = core::ptr::addr_of_mut!(page.tcb_ptr);
-        core::arch::asm!("msr tpidr_el0, {}", in(reg) abi_ptr);
-    }
-    #[cfg(target_arch = "riscv64")]
-    unsafe {
-        let abi_ptr = core::ptr::addr_of_mut!(page.tcb_ptr) as usize;
-        core::arch::asm!("mv tp, {}", in(reg) (abi_ptr + 8));
+        tcb_activate(page);
     }
     initialize();
 

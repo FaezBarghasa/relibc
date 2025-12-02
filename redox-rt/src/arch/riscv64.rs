@@ -47,6 +47,15 @@ pub struct ArchIntRegs {
     pub fcsr: u32,
     _pad: u32,
 }
+#[repr(C)]
+pub struct TcbExtension {
+    pub self_ptr: *mut Self,
+    pub stack_base: *mut (),
+    pub stack_size: usize,
+    pub tls_dtv: *mut (),
+    pub tls_dtv_len: usize,
+    pub tls_static_base: *mut (),
+}
 
 /// Deactive TLS, used before exec() on Redox to not trick target executable into thinking TLS
 /// is already initialized as if it was a thread.
