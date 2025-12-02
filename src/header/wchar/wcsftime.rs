@@ -43,6 +43,11 @@ pub unsafe fn wcsftime<W: WriteWchar>(
                     return false;
                 }
             }};
+            (wstr $wstr:expr) => {{
+                if w.write_wstr($wstr).is_err() {
+                    return false;
+                }
+            }};
             (recurse $fmt:expr) => {{
                 let mut tmp = String::with_capacity($fmt.len() + 1);
                 tmp.push_str($fmt);
@@ -81,9 +86,13 @@ pub unsafe fn wcsftime<W: WriteWchar>(
 
             format = format.offset(1);
 
-            if *format == 'E' as wchar_t || *format == 'O' as wchar_t {
+            let modifier = if *format == 'E' as wchar_t || *format == 'O' as wchar_t {
+                let m = *format;
                 format = format.offset(1);
-            }
+                m
+            } else {
+                0
+            };
 
             match *format as u32 {
                 // %%
@@ -119,6 +128,25 @@ pub unsafe fn wcsftime<W: WriteWchar>(
                 0x42 => {
                     if !langinfo_to_wcs(MON_1 + (*t).tm_mon as i32, w) {
                         return false;
+                    }
+                }
+
+                // %c
+                0x63 => {
+                    let fmt = if modifier == 'E' as wchar_t {
+                        nl_langinfo(crate::header::langinfo::ERA_D_T_FMT)
+                    } else {
+                        nl_langinfo(crate::header::langinfo::D_T_FMT)
+                    };
+                    if !fmt.is_null() {
+                        let c_str = CStr::from_ptr(fmt);
+                        let mut wide_tmp = c_str.to_bytes().iter().map(|&c| c as wchar_t).collect::<Vec<wchar_t>>();
+                        wide_tmp.push(0);
+                        if !inner_wcsftime(w, wide_tmp.as_ptr(), t) {
+                            return false;
+                        }
+                    } else {
+                        w!(recurse "%a %b %e %T %Y");
                     }
                 }
 
@@ -217,6 +245,44 @@ pub unsafe fn wcsftime<W: WriteWchar>(
 
                 // %W
                 0x57 => w!("{}", ((*t).tm_yday + 7 - ((*t).tm_wday + 6) % 7) / 7),
+
+                // %x
+                0x78 => {
+                    let fmt = if modifier == 'E' as wchar_t {
+                        nl_langinfo(crate::header::langinfo::ERA_D_FMT)
+                    } else {
+                        nl_langinfo(crate::header::langinfo::D_FMT)
+                    };
+                    if !fmt.is_null() {
+                        let c_str = CStr::from_ptr(fmt);
+                        let mut wide_tmp = c_str.to_bytes().iter().map(|&c| c as wchar_t).collect::<Vec<wchar_t>>();
+                        wide_tmp.push(0);
+                        if !inner_wcsftime(w, wide_tmp.as_ptr(), t) {
+                            return false;
+                        }
+                    } else {
+                        w!(recurse "%m/%d/%y");
+                    }
+                }
+
+                // %X
+                0x58 => {
+                    let fmt = if modifier == 'E' as wchar_t {
+                        nl_langinfo(crate::header::langinfo::ERA_T_FMT)
+                    } else {
+                        nl_langinfo(crate::header::langinfo::T_FMT)
+                    };
+                    if !fmt.is_null() {
+                        let c_str = CStr::from_ptr(fmt);
+                        let mut wide_tmp = c_str.to_bytes().iter().map(|&c| c as wchar_t).collect::<Vec<wchar_t>>();
+                        wide_tmp.push(0);
+                        if !inner_wcsftime(w, wide_tmp.as_ptr(), t) {
+                            return false;
+                        }
+                    } else {
+                        w!(recurse "%H:%M:%S");
+                    }
+                }
 
                 // %y
                 0x79 => w!("{:02}", (*t).tm_year % 100),

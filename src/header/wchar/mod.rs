@@ -33,6 +33,18 @@ pub type wint_t = c_uint;
 
 pub trait WriteWchar {
     fn write_wchar(&mut self, wc: wchar_t) -> io::Result<()>;
+    fn write_wstr(&mut self, ws: *const wchar_t) -> io::Result<()> {
+        let mut i = 0;
+        loop {
+            let wc = unsafe { *ws.add(i) };
+            if wc == 0 {
+                break;
+            }
+            self.write_wchar(wc)?;
+            i += 1;
+        }
+        Ok(())
+    }
 }
 
 struct WcharWriter {
@@ -66,6 +78,18 @@ impl io::Write for WcharWriter {
     }
 
     fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
+
+impl WriteWchar for WcharWriter {
+    fn write_wchar(&mut self, wc: wchar_t) -> io::Result<()> {
+        if self.written < self.size {
+            unsafe {
+                *self.buf.add(self.written) = wc;
+            }
+            self.written += 1;
+        }
         Ok(())
     }
 }
@@ -575,12 +599,12 @@ pub unsafe extern "C" fn wcsftime(
     format: *const wchar_t,
     timeptr: *mut tm,
 ) -> size_t {
-    let ret = wcsftime::wcsftime(
-        &mut platform::StringWriter(wcs as *mut u16, maxsize),
-        format,
-        timeptr,
-    );
-    if ret < maxsize { ret } else { 0 }
+    let mut writer = WcharWriter::new(wcs, maxsize);
+    let ret = wcsftime::wcsftime(&mut writer, format, timeptr);
+    if writer.written < maxsize {
+        *wcs.add(writer.written) = 0;
+    }
+    ret
 }
 
 #[unsafe(no_mangle)]
@@ -776,43 +800,129 @@ pub unsafe extern "C" fn wcstof(mut ptr: *const wchar_t, end: *mut *mut wchar_t)
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn wcstod(mut ptr: *const wchar_t, end: *mut *mut wchar_t) -> c_double {
-    const RADIX: u32 = 10;
+pub unsafe extern "C" fn wcstod(mut nptr: *const wchar_t, endptr: *mut *mut wchar_t) -> c_double {
+    let mut ptr = nptr;
 
-    skipws!(ptr);
-    let negative = *ptr == '-' as wchar_t;
-    if negative {
+    // Skip whitespace
+    while iswspace(*ptr) != 0 {
         ptr = ptr.add(1);
     }
 
-    let mut result: c_double = 0.0;
-    while let Some(digit) = char::from_u32(*ptr as _).and_then(|c| c.to_digit(RADIX)) {
-        result *= 10.0;
-        if negative {
-            result -= digit as c_double;
+    // Check for sign
+    let mut sign = 1.0;
+    if *ptr == '+' as wchar_t {
+        ptr = ptr.add(1);
+    } else if *ptr == '-' as wchar_t {
+        sign = -1.0;
+        ptr = ptr.add(1);
+    }
+
+    // Check for infinity or NaN
+    if wcsncasecmp(ptr, "inf\0".as_ptr() as *const wchar_t, 3) == 0 {
+        if wcsncasecmp(ptr, "infinity\0".as_ptr() as *const wchar_t, 8) == 0 {
+            ptr = ptr.add(8);
         } else {
-            result += digit as c_double;
+            ptr = ptr.add(3);
         }
-        ptr = ptr.add(1);
+        if !endptr.is_null() {
+            *endptr = ptr as *mut _;
+        }
+        return sign * crate::header::math::HUGE_VAL;
     }
-    if *ptr == '.' as wchar_t {
+    if wcsncasecmp(ptr, "nan\0".as_ptr() as *const wchar_t, 3) == 0 {
+        ptr = ptr.add(3);
+        // Optional parenthesis
+        if *ptr == '(' as wchar_t {
+            ptr = ptr.add(1);
+            while *ptr != ')' as wchar_t && *ptr != '\0' as wchar_t {
+                ptr = ptr.add(1);
+            }
+            if *ptr == ')' as wchar_t {
+                ptr = ptr.add(1);
+            }
+        }
+        if !endptr.is_null() {
+            *endptr = ptr as *mut _;
+        }
+        return crate::header::math::NAN;
+    }
+
+    // Check for hexadecimal floating point
+    let mut base = 10.0;
+    if *ptr == '0' as wchar_t && (*ptr.add(1) == 'x' as wchar_t || *ptr.add(1) == 'X' as wchar_t) {
+        ptr = ptr.add(2);
+        base = 16.0;
+    }
+
+    let mut result = 0.0;
+    let mut frac = false;
+    let mut frac_count = 0.0;
+
+    while *ptr != '\0' as wchar_t {
+        let digit = if *ptr >= '0' as wchar_t && *ptr <= '9' as wchar_t {
+            *ptr as c_double - '0' as wchar_t as c_double
+        } else if *ptr >= 'a' as wchar_t && *ptr <= 'f' as wchar_t {
+            *ptr as c_double - 'a' as wchar_t as c_double + 10.0
+        } else if *ptr >= 'A' as wchar_t && *ptr <= 'F' as wchar_t {
+            *ptr as c_double - 'A' as wchar_t as c_double + 10.0
+        } else {
+            break;
+        };
+
+        if digit >= base {
+            break;
+        }
+
+        if frac {
+            frac_count += 1.0;
+            result += digit / base.powf(frac_count);
+        } else {
+            result = result * base + digit;
+        }
+
         ptr = ptr.add(1);
 
-        let mut scale = 1.0;
-        while let Some(digit) = char::from_u32(*ptr as _).and_then(|c| c.to_digit(RADIX)) {
-            scale /= 10.0;
-            if negative {
-                result -= digit as c_double * scale;
-            } else {
-                result += digit as c_double * scale;
+        if *ptr == '.' as wchar_t {
+            if frac {
+                break;
             }
+            frac = true;
             ptr = ptr.add(1);
         }
     }
-    if !end.is_null() {
-        *end = ptr as *mut _;
+
+    // Check for exponent
+    if *ptr == 'p' as wchar_t || *ptr == 'P' as wchar_t || *ptr == 'e' as wchar_t || *ptr == 'E' as wchar_t {
+        let exp_char = *ptr;
+        ptr = ptr.add(1);
+        let mut exp_sign = 1.0;
+        if *ptr == '+' as wchar_t {
+            ptr = ptr.add(1);
+        } else if *ptr == '-' as wchar_t {
+            exp_sign = -1.0;
+            ptr = ptr.add(1);
+        }
+
+        let mut exp = 0.0;
+        while *ptr >= '0' as wchar_t && *ptr <= '9' as wchar_t {
+            exp = exp * 10.0 + (*ptr as c_double - '0' as wchar_t as c_double);
+            ptr = ptr.add(1);
+        }
+
+        let exp_base = if exp_char == 'p' as wchar_t || exp_char == 'P' as wchar_t {
+            2.0
+        } else {
+            10.0
+        };
+
+        result *= exp_base.powf(exp * exp_sign);
     }
-    result
+
+    if !endptr.is_null() {
+        *endptr = ptr as *mut _;
+    }
+
+    result * sign
 }
 
 #[unsafe(no_mangle)]

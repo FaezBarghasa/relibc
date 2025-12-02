@@ -4,17 +4,38 @@ use crate::platform::types::*;
 use core::arch::asm;
 
 #[repr(C)]
+#[cfg(target_arch = "x86")]
 pub struct fenv_t {
-    #[cfg(target_arch = "aarch64")]
+    __control: u16,
+    __status: u16,
+    __reserved: [u32; 5],
+}
+
+#[repr(C)]
+#[cfg(target_arch = "x86_64")]
+pub struct fenv_t {
+    __control: u16,
+    __status: u16,
+    __reserved: [u32; 5],
+}
+
+#[repr(C)]
+#[cfg(target_arch = "aarch64")]
+pub struct fenv_t {
     __fpcr: u64,
-    #[cfg(target_arch = "aarch64")]
     __fpsr: u64,
-    #[cfg(target_arch = "riscv64")]
+}
+
+#[repr(C)]
+#[cfg(target_arch = "riscv64")]
+pub struct fenv_t {
     __fcsr: u64,
 }
 
 #[repr(C)]
 pub struct fexcept_t {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    __except: u32,
     #[cfg(target_arch = "aarch64")]
     __except: u64,
     #[cfg(target_arch = "riscv64")]
@@ -33,8 +54,31 @@ pub const FE_TONEAREST: c_int = 2;
 pub const FE_TOWARDZERO: c_int = 3;
 pub const FE_UPWARD: c_int = 4;
 
+#[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+pub const FE_DFL_ENV: *const fenv_t = &fenv_t {
+    __control: 0x37F,
+    __status: 0,
+    __reserved: [0; 5],
+};
+#[cfg(target_arch = "aarch64")]
+pub const FE_DFL_ENV: *const fenv_t = &fenv_t {
+    __fpcr: 0,
+    __fpsr: 0,
+};
+#[cfg(target_arch = "riscv64")]
+pub const FE_DFL_ENV: *const fenv_t = &fenv_t {
+    __fcsr: 0,
+};
+
 #[no_mangle]
 pub unsafe extern "C" fn feclearexcept(excepts: c_int) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        fenv.__status &= !(excepts as u16);
+        asm!("fldenv [{}]", in(reg) &fenv);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpsr: u64;
@@ -54,6 +98,12 @@ pub unsafe extern "C" fn feclearexcept(excepts: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fegetexceptflag(flagp: *mut fexcept_t, excepts: c_int) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        (*flagp).__except = (fenv.__status & (excepts as u16)) as u32;
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpsr: u64;
@@ -71,6 +121,13 @@ pub unsafe extern "C" fn fegetexceptflag(flagp: *mut fexcept_t, excepts: c_int) 
 
 #[no_mangle]
 pub unsafe extern "C" fn feraiseexcept(excepts: c_int) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        fenv.__status |= excepts as u16;
+        asm!("fldenv [{}]", in(reg) &fenv);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpsr: u64;
@@ -90,6 +147,14 @@ pub unsafe extern "C" fn feraiseexcept(excepts: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fesetexceptflag(flagp: *const fexcept_t, excepts: c_int) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        fenv.__status &= !(excepts as u16);
+        fenv.__status |= (*flagp).__except as u16 & (excepts as u16);
+        asm!("fldenv [{}]", in(reg) &fenv);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpsr: u64;
@@ -111,6 +176,12 @@ pub unsafe extern "C" fn fesetexceptflag(flagp: *const fexcept_t, excepts: c_int
 
 #[no_mangle]
 pub unsafe extern "C" fn fetestexcept(excepts: c_int) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        return (fenv.__status as c_int) & excepts;
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpsr: u64;
@@ -123,7 +194,7 @@ pub unsafe extern "C" fn fetestexcept(excepts: c_int) -> c_int {
         asm!("frcsr {}", out(reg) fcsr);
         return (fcsr as c_int) & excepts;
     }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
     {
         unimplemented!();
     }
@@ -131,6 +202,12 @@ pub unsafe extern "C" fn fetestexcept(excepts: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fegetround() -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        return ((fenv.__control >> 10) & 3) as c_int;
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpcr: u64;
@@ -143,7 +220,7 @@ pub unsafe extern "C" fn fegetround() -> c_int {
         asm!("frcsr {}", out(reg) fcsr);
         return ((fcsr >> 5) & 7) as c_int;
     }
-    #[cfg(not(any(target_arch = "aarch64", target_arch = "riscv64")))]
+    #[cfg(not(any(target_arch = "x86", target_arch = "x86_64", target_arch = "aarch64", target_arch = "riscv64")))]
     {
         unimplemented!();
     }
@@ -151,6 +228,14 @@ pub unsafe extern "C" fn fegetround() -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fesetround(round: c_int) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        fenv.__control &= !(3 << 10);
+        fenv.__control |= (round as u16) << 10;
+        asm!("fldenv [{}]", in(reg) &fenv);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpcr: u64;
@@ -172,6 +257,10 @@ pub unsafe extern "C" fn fesetround(round: c_int) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fegetenv(envp: *mut fenv_t) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        asm!("fnstenv [{}]", in(reg) envp);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         asm!("mrs {}, fpcr", out(reg) (*envp).__fpcr);
@@ -186,6 +275,14 @@ pub unsafe extern "C" fn fegetenv(envp: *mut fenv_t) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn feholdexcept(envp: *mut fenv_t) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        asm!("fnstenv [{}]", in(reg) envp);
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        fenv.__status &= !FE_ALL_EXCEPT as u16;
+        asm!("fldenv [{}]", in(reg) &fenv);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         asm!("mrs {}, fpcr", out(reg) (*envp).__fpcr);
@@ -208,6 +305,10 @@ pub unsafe extern "C" fn feholdexcept(envp: *mut fenv_t) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn fesetenv(envp: *const fenv_t) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        asm!("fldenv [{}]", in(reg) envp);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         asm!("msr fpcr, {}", in(reg) (*envp).__fpcr);
@@ -222,6 +323,19 @@ pub unsafe extern "C" fn fesetenv(envp: *const fenv_t) -> c_int {
 
 #[no_mangle]
 pub unsafe extern "C" fn feupdateenv(envp: *const fenv_t) -> c_int {
+    #[cfg(any(target_arch = "x86", target_arch = "x86_64"))]
+    {
+        let mut fenv: fenv_t = core::mem::MaybeUninit::uninit().assume_init();
+        asm!("fnstenv [{}]", in(reg) &mut fenv);
+        asm!("fldenv [{}]", in(reg) envp);
+        let mut status: u16;
+        asm!("fstsw ax", out("ax") status);
+        status |= fenv.__status;
+        let mut control: u16;
+        asm!("fnstcw [{}]", in(reg) &mut control);
+        control |= fenv.__control;
+        asm!("fldcw [{}]", in(reg) &control);
+    }
     #[cfg(target_arch = "aarch64")]
     {
         let mut fpsr: u64;
@@ -229,7 +343,7 @@ pub unsafe extern "C" fn feupdateenv(envp: *const fenv_t) -> c_int {
         asm!("msr fpcr, {}", in(reg) (*envp).__fpcr);
         asm!("msr fpsr, {}", in(reg) (*envp).__fpsr | (fpsr & FE_ALL_EXCEPT as u64));
     }
-    #[cfg(target_.arch = "riscv64")]
+    #[cfg(target_arch = "riscv64")]
     {
         let mut fcsr: u64;
         asm!("frcsr {}", out(reg) fcsr);
