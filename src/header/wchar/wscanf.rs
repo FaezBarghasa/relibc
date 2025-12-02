@@ -368,6 +368,7 @@ unsafe fn inner_scanf(
                                     **ptr = wchar as $type;
                                     *ptr = ptr.offset(1);
                                 }
+                                r.commit();
                                 width = width.map(|w| w - 1);
                                 if width.map(|w| w > 0).unwrap_or(true) && !read!() {
                                     eof = true;
@@ -378,7 +379,6 @@ unsafe fn inner_scanf(
                             if let Some(ptr) = ptr {
                                 *ptr = 0;
                                 matched += 1;
-                                r.commit();
                             }
                         };
                     }
@@ -400,6 +400,7 @@ unsafe fn inner_scanf(
                                 if let Some(ptr) = ptr {
                                     *ptr.add(i) = wchar as $type;
                                 }
+                                r.commit();
                                 width = width.map(|w| w - 1);
                                 if width.map(|w| w > 0).unwrap_or(true) && !read!() {
                                     eof = true;
@@ -409,7 +410,6 @@ unsafe fn inner_scanf(
 
                             if ptr.is_some() {
                                 matched += 1;
-                                r.commit();
                             }
                         };
                     }

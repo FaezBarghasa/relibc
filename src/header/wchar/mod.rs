@@ -28,6 +28,9 @@ mod wprintf;
 mod wscanf;
 mod wcsftime;
 
+pub type wchar_t = c_int;
+pub type wint_t = c_uint;
+
 pub trait WriteWchar {
     fn write_wchar(&mut self, wc: wchar_t) -> io::Result<()>;
 }
@@ -69,7 +72,13 @@ impl io::Write for WcharWriter {
 
 #[repr(C)]
 #[derive(Clone, Copy)]
-pub struct mbstate_t;
+pub struct mbstate_t {
+    // The first element of the state is a c_int. We need to store a character
+    // there to be able to represent any UTF-8 character.
+    // The second element is a counter of how many bytes we have stored.
+    __count: c_int,
+    __value: c_int,
+}
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn btowc(c: c_int) -> wint_t {
@@ -80,7 +89,10 @@ pub unsafe extern "C" fn btowc(c: c_int) -> wint_t {
 
     let uc = c as u8;
     let c = uc as c_char;
-    let mut ps: mbstate_t = mbstate_t;
+    let mut ps: mbstate_t = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
     let mut wc: wchar_t = 0;
     let saved_errno = platform::ERRNO.get();
     let status = mbrtowc(&mut wc, &c as *const c_char, 1, &mut ps);
@@ -160,7 +172,10 @@ pub unsafe extern "C" fn fgetws(ws: *mut wchar_t, n: c_int, stream: *mut FILE) -
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fputwc(wc: wchar_t, stream: *mut FILE) -> wint_t {
     //Convert wchar_t to multibytes first
-    static mut INTERNAL: mbstate_t = mbstate_t;
+    static mut INTERNAL: mbstate_t = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
     let mut bytes: [c_char; MB_CUR_MAX as usize] = [0; MB_CUR_MAX as usize];
 
     let amount = wcrtomb(bytes.as_mut_ptr(), wc, &raw mut INTERNAL);
@@ -205,12 +220,19 @@ pub unsafe extern "C" fn getwchar() -> wint_t {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mbsinit(ps: *const mbstate_t) -> c_int {
     //Add a check for the state maybe
-    if ps.is_null() { 1 } else { 0 }
+    if ps.is_null() || (*ps).__count == 0 {
+        1
+    } else {
+        0
+    }
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mbrlen(s: *const c_char, n: size_t, ps: *mut mbstate_t) -> size_t {
-    static mut INTERNAL: mbstate_t = mbstate_t;
+    static mut INTERNAL: mbstate_t = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
     mbrtowc(ptr::null_mut(), s, n, &raw mut INTERNAL)
 }
 
@@ -222,7 +244,10 @@ pub unsafe extern "C" fn mbrtowc(
     n: size_t,
     ps: *mut mbstate_t,
 ) -> size_t {
-    static mut INTERNAL: mbstate_t = mbstate_t;
+    static mut INTERNAL: mbstate_t = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
 
     if ps.is_null() {
         let ps = &raw mut INTERNAL;
@@ -245,7 +270,10 @@ pub unsafe extern "C" fn mbsnrtowcs(
     dst_len: size_t,
     ps: *mut mbstate_t,
 ) -> size_t {
-    static mut INTERNAL: mbstate_t = mbstate_t;
+    static mut INTERNAL: mbstate_t = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
 
     if ps.is_null() {
         let ps = &raw mut INTERNAL;
@@ -341,7 +369,10 @@ pub unsafe extern "C" fn ungetwc(wc: wint_t, stream: &mut FILE) -> wint_t {
     if wc == WEOF {
         return wc;
     }
-    static mut INTERNAL: mbstate_t = mbstate_t;
+    static mut INTERNAL: mbstate_t = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
     let mut bytes: [c_char; MB_CUR_MAX as usize] = [0; MB_CUR_MAX as usize];
 
     let amount = wcrtomb(bytes.as_mut_ptr(), wc as wchar_t, &raw mut INTERNAL);
@@ -382,6 +413,30 @@ pub unsafe extern "C" fn fwprintf(
     mut __valist: ...
 ) -> c_int {
     vfwprintf(stream, format, __valist.as_va_list())
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn vfwscanf(
+    stream: *mut FILE,
+    format: *const wchar_t,
+    arg: va_list,
+) -> c_int {
+    let mut file = (*stream).lock();
+    if let Err(_) = file.try_set_wide_orientation_unlocked() {
+        return -1;
+    }
+
+    let f: &mut FILE = &mut *file;
+    let reader: LookAheadReader = f.into();
+    wscanf::scanf(reader, format, arg)
+}
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn fwscanf(
+    stream: *mut FILE,
+    format: *const wchar_t,
+    mut __valist: ...
+) -> c_int {
+    vfwscanf(stream, format, __valist.as_va_list())
 }
 
 #[unsafe(no_mangle)]
@@ -461,7 +516,10 @@ pub unsafe extern "C" fn wcsrtombs(
     n: size_t,
     mut st: *mut mbstate_t,
 ) -> size_t {
-    let mut mbs = mbstate_t {};
+    let mut mbs = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
     if st.is_null() {
         st = &mut mbs;
     }
@@ -635,7 +693,10 @@ pub unsafe extern "C" fn wcsnrtombs(
     let mut written = 0;
     let mut read = 0;
     let mut buf: [c_char; MB_LEN_MAX as usize] = [0; MB_LEN_MAX as usize];
-    let mut mbs = mbstate_t {};
+    let mut mbs = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
 
     if ps.is_null() {
         ps = &mut mbs;
