@@ -105,48 +105,30 @@ pub unsafe extern "C" fn btowc(c: c_int) -> wint_t {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn fgetwc(stream: *mut FILE) -> wint_t {
-    // TODO: Process locale
-    let mut buf: [c_uchar; MB_CUR_MAX as usize] = [0; MB_CUR_MAX as usize];
-    let mut encoded_length = 0;
-    let mut bytes_read = 0;
-    let mut wc: wchar_t = 0;
-
-    loop {
-        let nread = fread(
-            buf[bytes_read..bytes_read + 1].as_mut_ptr() as *mut c_void,
-            1,
-            1,
-            stream,
-        );
-
-        if nread != 1 {
+    let mut c = fgetc(stream);
+    if c == EOF {
+        return WEOF;
+    }
+    let mut ps = mbstate_t {
+        __count: 0,
+        __value: 0,
+    };
+    let mut wc = 0;
+    let mut c_char = c as c_char;
+    let mut n = mbrtowc(&mut wc, &c_char, 1, &mut ps);
+    while n == usize::MAX - 2 {
+        c = fgetc(stream);
+        if c == EOF {
             ERRNO.set(EILSEQ);
             return WEOF;
         }
-
-        bytes_read += 1;
-
-        if bytes_read == 1 {
-            encoded_length = if let Some(el) = get_char_encoded_length(buf[0]) {
-                el
-            } else {
-                ERRNO.set(EILSEQ);
-                return WEOF;
-            };
-        }
-
-        if bytes_read >= encoded_length {
-            break;
-        }
+        c_char = c as c_char;
+        n = mbrtowc(&mut wc, &c_char, 1, &mut ps);
     }
-
-    mbrtowc(
-        &mut wc,
-        buf.as_ptr() as *const c_char,
-        encoded_length,
-        ptr::null_mut(),
-    );
-
+    if n == usize::MAX - 1 {
+        ERRNO.set(EILSEQ);
+        return WEOF;
+    }
     wc as wint_t
 }
 
@@ -157,15 +139,20 @@ pub unsafe extern "C" fn fgetws(ws: *mut wchar_t, n: c_int, stream: *mut FILE) -
     while ((i + 1) as c_int) < n {
         let wc = fgetwc(stream);
         if wc == WEOF {
-            return ptr::null_mut();
+            if i == 0 {
+                return ptr::null_mut();
+            } else {
+                break;
+            }
         }
         *ws.add(i) = wc as wchar_t;
+        if wc as wchar_t == '\n' as wchar_t {
+            i += 1;
+            break;
+        }
         i += 1;
     }
-    while (i as c_int) < n {
-        *ws.add(i) = 0;
-        i += 1;
-    }
+    *ws.add(i) = 0;
     ws
 }
 
@@ -564,15 +551,7 @@ pub unsafe extern "C" fn wcscoll(ws1: *const wchar_t, ws2: *const wchar_t) -> c_
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wcscpy(ws1: *mut wchar_t, ws2: *const wchar_t) -> *mut wchar_t {
-    let mut i = 0;
-    loop {
-        let wc = *ws2.add(i);
-        *ws1.add(i) = wc;
-        i += 1;
-        if wc == 0 {
-            return ws1;
-        }
-    }
+    wmemcpy(ws1, ws2, wcslen(ws2) + 1)
 }
 
 unsafe fn inner_wcsspn(mut wcs: *const wchar_t, set: *const wchar_t, reject: bool) -> size_t {
@@ -650,19 +629,9 @@ pub unsafe extern "C" fn wcsncpy(
     ws2: *const wchar_t,
     n: size_t,
 ) -> *mut wchar_t {
-    let mut i = 0;
-    while i < n {
-        let wc = *ws2.add(i);
-        *ws1.add(i) = wc;
-        i += 1;
-        if wc == 0 {
-            break;
-        }
-    }
-    while i < n {
-        *ws1.add(i) = 0;
-        i += 1;
-    }
+    let len = wcsnlen(ws2, n);
+    wmemcpy(ws1, ws2, len);
+    wmemset(ws1.add(len), 0, n - len);
     ws1
 }
 
@@ -1039,9 +1008,13 @@ pub unsafe extern "C" fn wcswidth(pwcs: *const wchar_t, n: size_t) -> c_int {
     total_width
 }
 
-// #[unsafe(no_mangle)]
-pub extern "C" fn wcsxfrm(ws1: *mut wchar_t, ws2: *const wchar_t, n: size_t) -> size_t {
-    unimplemented!();
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wcsxfrm(ws1: *mut wchar_t, ws2: *const wchar_t, n: size_t) -> size_t {
+    let len = wcslen(ws2);
+    if len < n {
+        wcsncpy(ws1, ws2, len + 1);
+    }
+    len
 }
 
 #[unsafe(no_mangle)]

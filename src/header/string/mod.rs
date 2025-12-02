@@ -392,41 +392,11 @@ pub unsafe extern "C" fn strlcpy(dst: *mut c_char, src: *const c_char, n: size_t
 pub unsafe extern "C" fn strlen(s: *const c_char) -> size_t {
     let mut ptr = s as *const u8;
     let mut len = 0;
-    
-    // Align to usize
-    while (ptr as usize) % mem::size_of::<usize>() != 0 {
-        if *ptr == 0 {
-            return len;
-        }
+    while *ptr != 0 {
         ptr = ptr.add(1);
         len += 1;
     }
-
-    // Scan word by word
-    let mut word_ptr = ptr as *const usize;
-    const LO_MAGIC: usize = usize::MAX / 255;
-    const HI_MAGIC: usize = LO_MAGIC << 7;
-
-    loop {
-        let word = *word_ptr;
-        if (word.wrapping_sub(LO_MAGIC) & !word & HI_MAGIC) != 0 {
-            // Found a zero byte (or something that looks like it in high bits processing, 
-            // but for 0x8080... mask logic to work we need to be careful. 
-            // The standard trick: (x - 0x01) & ~x & 0x80
-            
-            // Let's use a simpler byte scan for the found word to be safe and correct regardless of endianness
-            ptr = word_ptr as *const u8;
-            for _ in 0..mem::size_of::<usize>() {
-                if *ptr == 0 {
-                    return len;
-                }
-                ptr = ptr.add(1);
-                len += 1;
-            }
-        }
-        word_ptr = word_ptr.add(1);
-        len += mem::size_of::<usize>();
-    }
+    len
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/strncat.html>.
