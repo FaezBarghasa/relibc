@@ -17,6 +17,7 @@ extern crate platform;
 
 // --- Core Modules ---
 pub mod allocator;
+pub mod c_rt;
 pub mod callbacks;
 pub mod debug;
 pub mod dso;

@@ -2,12 +2,13 @@
 name = "ld_so"
 version = "0.1.0"
 authors = ["Jeremy Soller <jackpot51@gmail.com>"]
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 macros = { path = "../macros" }
 platform = { path = "../platform" }
 spin = { version = "0.9", default-features = false, features = ["rwlock"] }
+redox-rt = { path = "../redox-rt", default-features = false }
 
 [lib]
 name = "ld_so"

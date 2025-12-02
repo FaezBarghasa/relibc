@@ -34,101 +34,38 @@ pub struct Dtv {
     pub vector: *mut usize,
 }
 
-#[repr(C)]
-pub struct Tcb {
-    pub tcb_self: *mut Tcb,
-    pub dtv: *mut Dtv,
-    pub sysinfo: usize,
-    pub stack_guard: usize,
-    pub locale: usize,
+pub type Tcb = redox_rt::Tcb;
+
+#[unsafe(no_mangle)]
+pub struct TcbExt {
+    pub stack_base: *mut (),
+    pub stack_size: usize,
+    pub tls_dtv: *mut (),
+    pub tls_dtv_len: usize,
+    pub tls_static_base: *mut (),
 }
 
 impl Tcb {
-    /// Create a new TCB for the current thread.
-    /// Allocates the Static TLS block + TCB in one go.
-    pub unsafe fn new(static_tls_size: usize, static_tls_align: usize) -> *mut Tcb {
-        let tcb_size = mem::size_of::<Tcb>();
-
-        // Variant II (x86_64): [ TLS Block ] [ TCB ]
-        #[cfg(target_arch = "x86_64")]
-        let (layout_size, tcb_offset) = {
-            let size = static_tls_size + tcb_size;
-            // Align the TCB start if necessary, though FS usually sets base.
-            (size, static_tls_size)
-        };
-
-        // Variant I (RISC-V, AArch64): [ TCB ] [ TLS Block ]
-        #[cfg(any(target_arch = "aarch64", target_arch = "riscv64"))]
-        let (layout_size, tcb_offset) = {
-            // Align TCB size so TLS block starts aligned
-            let tcb_aligned = (tcb_size + static_tls_align - 1) & !(static_tls_align - 1);
-            (tcb_aligned + static_tls_size, 0)
-        };
-
-        let ptr = crate::__rust_alloc(layout_size, static_tls_align);
-        if ptr.is_null() {
-            return ptr::null_mut();
-        }
-
-        ptr::write_bytes(ptr, 0, layout_size);
-
-        let tcb = ptr.add(tcb_offset) as *mut Tcb;
-
-        (*tcb).tcb_self = tcb;
-        // Initialize DTV with initial capacity based on currently loaded modules
-        (*tcb).dtv = Dtv::new(max_module_id());
-        (*tcb).stack_guard = 0xDEADBEEF; // Should be random
-
+    pub unsafe fn from_static(
+        static_tls_ptr: *mut u8,
+        static_tls_len: usize,
+        static_dtv: *mut (),
+        static_dtv_len: usize,
+        stack_base: *mut (),
+        stack_size: usize,
+    ) -> *mut Self {
+        let tcb = (static_tls_ptr as *mut Self).offset(-1);
+        (*tcb).tcb_ptr = tcb;
+        (*tcb).tcb_len = core::mem::size_of::<Self>();
+        (*tcb).tls_end = static_tls_ptr.add(static_tls_len);
+        (*tcb).dtv = static_dtv;
+        (*tcb).dtv_len = static_dtv_len;
+        (*tcb).platform_specific.stack_base = stack_base;
+        (*tcb).platform_specific.stack_size = stack_size;
+        (*tcb).platform_specific.tls_dtv = static_dtv;
+        (*tcb).platform_specific.tls_dtv_len = static_dtv_len;
+        (*tcb).platform_specific.tls_static_base = static_tls_ptr;
         tcb
-    }
-
-    pub unsafe fn activate(&self) {
-        let ptr = self as *const Tcb as usize;
-        #[cfg(target_arch = "x86_64")]
-        core::arch::asm!("wrfsbase {}", in(reg) ptr);
-        #[cfg(target_arch = "aarch64")]
-        core::arch::asm!("msr tpidr_el0, {}", in(reg) ptr);
-        #[cfg(target_arch = "riscv64")]
-        core::arch::asm!("mv tp, {}", in(reg) ptr);
-    }
-}
-
-impl Dtv {
-    unsafe fn new(capacity: usize) -> *mut Dtv {
-        let dtv_struct =
-            crate::__rust_alloc(mem::size_of::<Dtv>(), mem::align_of::<Dtv>()) as *mut Dtv;
-
-        // Allocate vector: [Generation, Ptr1, Ptr2, ... PtrN]
-        let vec_len = capacity + 1;
-        let vec_size = vec_len * mem::size_of::<usize>();
-        let vec_ptr = crate::__rust_alloc_zeroed(vec_size, mem::align_of::<usize>()) as *mut usize;
-
-        *vec_ptr = TLS_GENERATION.load(core::sync::atomic::Ordering::SeqCst);
-
-        (*dtv_struct).capacity = capacity;
-        (*dtv_struct).vector = vec_ptr;
-
-        dtv_struct
-    }
-
-    unsafe fn resize(&mut self, new_capacity: usize) {
-        if new_capacity <= self.capacity {
-            return;
-        }
-
-        let vec_len = new_capacity + 1;
-        let vec_size = vec_len * mem::size_of::<usize>();
-        let new_vec = crate::__rust_alloc_zeroed(vec_size, mem::align_of::<usize>()) as *mut usize;
-
-        // Copy existing pointers
-        ptr::copy_nonoverlapping(self.vector, new_vec, self.capacity + 1);
-
-        // Update generation
-        *new_vec = TLS_GENERATION.load(core::sync::atomic::Ordering::SeqCst);
-
-        // In a real impl, free self.vector here.
-        self.vector = new_vec;
-        self.capacity = new_capacity;
     }
 }
 
@@ -140,29 +77,39 @@ pub unsafe extern "C" fn __tls_get_addr(ti: *const TlsIndex) -> *mut u8 {
     let offset = (*ti).ti_offset;
 
     // 1. Get Thread Pointer
-    let tcb = current_tcb();
-    let dtv = &mut *(*tcb).dtv;
+    let tcb = Tcb::current().unwrap();
+    let dtv = tcb.dtv as *mut elf::TlsDtv;
 
     // 2. Check Generation (Lazy DTV Update)
     let global_gen = TLS_GENERATION.load(core::sync::atomic::Ordering::Acquire);
-    let dtv_gen = *dtv.vector;
 
     // If DTV is stale or too small for this module ID
-    if dtv_gen < global_gen || mod_id > dtv.capacity {
+    if (*dtv).gen < global_gen || mod_id > (*dtv).num {
         let required = max_module_id().max(mod_id);
-        dtv.resize(required);
+        // resize dtv
+        let new_dtv_size = (required + 1) * size_of::<elf::TlsModule>();
+        let new_dtv = crate::allocator::alloc(new_dtv_size, 16) as *mut elf::TlsDtv;
+        (*new_dtv).gen = global_gen;
+        (*new_dtv).num = required;
+        ptr::copy_nonoverlapping(
+            dtv.add(1),
+            new_dtv.add(1),
+            (*dtv).num * size_of::<elf::TlsModule>(),
+        );
+        tcb.dtv = new_dtv as *mut ();
+        tcb.dtv_len = required;
     }
 
     // 3. Retrieve Block Pointer
     // dtv.vector[mod_id] holds the pointer.
-    let slot_ptr = dtv.vector.add(mod_id);
-    let mut tls_block = *slot_ptr;
+    let dtv_slot = (dtv as *mut elf::TlsModule).add(mod_id);
+    let mut tls_block = (*dtv_slot).pointer as usize;
 
     // 4. Lazy Allocation
     // If the pointer is 0 (UNALLOCATED), we must allocate it now.
     if tls_block == 0 {
         tls_block = allocate_tls_module(mod_id);
-        *slot_ptr = tls_block;
+        (*dtv_slot).pointer = tls_block as *mut ();
     }
 
     // 5. Return Address
@@ -196,26 +143,4 @@ unsafe fn allocate_tls_module(mod_id: usize) -> usize {
     }
 
     ptr as usize
-}
-
-#[inline(always)]
-unsafe fn current_tcb() -> *mut Tcb {
-    #[cfg(target_arch = "x86_64")]
-    {
-        let tcb: *mut Tcb;
-        core::arch::asm!("mov {}, fs:0", out(reg) tcb);
-        tcb
-    }
-    #[cfg(target_arch = "aarch64")]
-    {
-        let tcb: *mut Tcb;
-        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tcb);
-        tcb
-    }
-    #[cfg(target_arch = "riscv64")]
-    {
-        let tcb: *mut Tcb;
-        core::arch::asm!("mv {}, tp", out(reg) tcb);
-        tcb
-    }
 }
