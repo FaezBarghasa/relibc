@@ -1,4 +1,5 @@
 use crate::platform::types::*;
+use core::ptr;
 
 pub unsafe fn introsort<F>(
     base: *mut c_char,
@@ -223,24 +224,6 @@ where
 }
 
 #[inline]
-unsafe fn swap(mut ptr1: *mut c_char, mut ptr2: *mut c_char, mut width: size_t) {
-    use core::mem;
-
-    const BUFSIZE: usize = 128;
-
-    let mut buffer = mem::MaybeUninit::<[c_char; BUFSIZE]>::uninit();
-    while width > 0 {
-        let copy_size = BUFSIZE.min(width as usize);
-        let buf = buffer.as_mut_ptr() as *mut c_char;
-
-        unsafe {
-            buf.copy_from_nonoverlapping(ptr1, copy_size);
-            ptr1.copy_from_nonoverlapping(ptr2, copy_size);
-            ptr2.copy_from_nonoverlapping(buf, copy_size);
-
-            ptr1 = ptr1.add(copy_size);
-            ptr2 = ptr2.add(copy_size);
-        }
-        width -= copy_size as size_t;
-    }
+unsafe fn swap(ptr1: *mut c_char, ptr2: *mut c_char, width: size_t) {
+    ptr::swap_nonoverlapping(ptr1, ptr2, width);
 }
