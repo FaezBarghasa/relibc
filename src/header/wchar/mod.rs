@@ -802,6 +802,11 @@ macro_rules! skipws {
 }
 
 #[unsafe(no_mangle)]
+pub unsafe extern "C" fn wcstof(mut ptr: *const wchar_t, end: *mut *mut wchar_t) -> c_float {
+    wcstod(ptr, end) as c_float
+}
+
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn wcstod(mut ptr: *const wchar_t, end: *mut *mut wchar_t) -> c_double {
     const RADIX: u32 = 10;
 
@@ -839,6 +844,11 @@ pub unsafe extern "C" fn wcstod(mut ptr: *const wchar_t, end: *mut *mut wchar_t)
         *end = ptr as *mut _;
     }
     result
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn wcstold(mut ptr: *const wchar_t, end: *mut *mut wchar_t) -> c_longdouble {
+    wcstod(ptr, end) as c_longdouble
 }
 
 #[unsafe(no_mangle)]
