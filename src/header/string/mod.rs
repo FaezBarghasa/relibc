@@ -58,32 +58,14 @@ pub unsafe extern "C" fn memchr(
 #[unsafe(no_mangle)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) -> c_int {
-    let (div, rem) = (n / mem::size_of::<usize>(), n % mem::size_of::<usize>());
-    let mut a = s1 as *const usize;
-    let mut b = s2 as *const usize;
-    for _ in 0..div {
-        if *a != *b {
-            for i in 0..mem::size_of::<usize>() {
-                let c = *(a as *const u8).add(i);
-                let d = *(b as *const u8).add(i);
-                if c != d {
-                    return c as c_int - d as c_int;
-                }
-            }
-            unreachable!()
+    let s1 = s1 as *const u8;
+    let s2 = s2 as *const u8;
+    for i in 0..n {
+        let a = *s1.add(i);
+        let b = *s2.add(i);
+        if a != b {
+            return a as c_int - b as c_int;
         }
-        a = a.offset(1);
-        b = b.offset(1);
-    }
-
-    let mut a = a as *const u8;
-    let mut b = b as *const u8;
-    for _ in 0..rem {
-        if *a != *b {
-            return *a as c_int - *b as c_int;
-        }
-        a = a.offset(1);
-        b = b.offset(1);
     }
     0
 }
@@ -98,9 +80,7 @@ pub unsafe extern "C" fn memcmp(s1: *const c_void, s2: *const c_void, n: usize) 
 ///     - `s2` is convertible to a `&[MaybeUninit<u8>]` with length `n`.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn memcpy(s1: *mut c_void, s2: *const c_void, n: size_t) -> *mut c_void {
-    for i in 0..n {
-        *(s1 as *mut u8).add(i) = *(s2 as *const u8).add(i);
-    }
+    ptr::copy_nonoverlapping(s2 as *const u8, s1 as *mut u8, n);
     s1
 }
 

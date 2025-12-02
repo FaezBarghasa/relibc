@@ -3,6 +3,10 @@
 
 use crate::platform::types::*;
 
+#[cfg(target_arch = "aarch64")]
+#[path = "aarch64.rs"]
+mod arch;
+
 pub const FE_ALL_EXCEPT: c_int = 0;
 pub const FE_TONEAREST: c_int = 0;
 
@@ -28,9 +32,16 @@ pub unsafe extern "C" fn fegetexceptflag(flagp: *mut fexcept_t, excepts: c_int) 
     unimplemented!();
 }
 
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn fegetround() -> c_int {
-    FE_TONEAREST
+    #[cfg(target_arch = "aarch64")]
+    {
+        arch::fegetround()
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        FE_TONEAREST
+    }
 }
 
 // #[unsafe(no_mangle)]
@@ -53,9 +64,16 @@ pub unsafe extern "C" fn fesetexceptflag(flagp: *const fexcept_t, excepts: c_int
     unimplemented!();
 }
 
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub unsafe extern "C" fn fesetround(round: c_int) -> c_int {
-    unimplemented!();
+    #[cfg(target_arch = "aarch64")]
+    {
+        arch::fesetround(round)
+    }
+    #[cfg(not(target_arch = "aarch64"))]
+    {
+        unimplemented!();
+    }
 }
 
 // #[unsafe(no_mangle)]

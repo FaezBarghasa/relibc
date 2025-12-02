@@ -8,25 +8,8 @@ pub unsafe fn introsort<F>(
 ) where
     F: FnMut(*const c_void, *const c_void) -> c_int,
 {
-    /*TODO: introsort is much faster than insertion sort, but is currently broken
-    let maxdepth = 2 * log2(nel);
-    introsort_helper(base, nel, width, maxdepth, comp);
-    */
-    insertion_sort(base, nel, width, &mut comp);
-}
-
-// NOTE: if num is 0, the result should be considered undefined
-fn log2(num: size_t) -> size_t {
-    const IS_32_BIT: bool = size_t::max_value() as u32 as size_t == size_t::max_value();
-
-    let max_bits = if IS_32_BIT {
-        31
-    } else {
-        // assuming we are 64-bit (this may or may not need to be updated in the future)
-        63
-    };
-
-    max_bits - num.to_le().leading_zeros() as size_t
+    let maxdepth = 2 * (size_t::BITS - nel.leading_zeros()) as size_t;
+    introsort_helper(base, nel, width, maxdepth, &mut comp);
 }
 
 unsafe fn introsort_helper<F>(

@@ -6,7 +6,7 @@
 use core::{char, ffi::VaList as va_list, mem, ptr, slice, usize};
 
 use crate::{
-    c_str::WStr,
+    c_str::{WStr, Wide},
     header::{
         ctype::isspace,
         errno::{EILSEQ, ENOMEM, ERANGE},
@@ -17,6 +17,7 @@ use crate::{
         wchar::{lookaheadreader::LookAheadReader, utf8::get_char_encoded_length},
         wctype::*,
     },
+    io,
     iter::{NulTerminated, NulTerminatedInclusive},
     platform::{self, ERRNO, types::*},
 };
@@ -25,6 +26,41 @@ mod lookaheadreader;
 mod utf8;
 mod wprintf;
 mod wscanf;
+
+struct WcharWriter {
+    buf: *mut wchar_t,
+    size: usize,
+    written: usize,
+}
+
+impl WcharWriter {
+    fn new(buf: *mut wchar_t, size: usize) -> Self {
+        Self {
+            buf,
+            size,
+            written: 0,
+        }
+    }
+}
+
+impl io::Write for WcharWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let s = unsafe { core::str::from_utf8_unchecked(buf) };
+        for c in s.chars() {
+            if self.written < self.size {
+                unsafe {
+                    *self.buf.add(self.written) = c as wchar_t;
+                }
+                self.written += 1;
+            }
+        }
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -359,10 +395,12 @@ pub unsafe extern "C" fn vswprintf(
     format: *const wchar_t,
     arg: va_list,
 ) -> c_int {
-    //TODO: implement vswprintf. This is not as simple as wprintf, since the output is not UTF-8
-    // but instead is a wchar array.
-    eprintln!("vswprintf not implemented");
-    -1
+    let mut writer = WcharWriter::new(s, n);
+    let result = crate::header::stdio::printf::inner_printf::<Wide, _>(&mut writer, WStr::from_ptr(format), arg);
+    if writer.written < n {
+        *s.add(writer.written) = 0;
+    }
+    result.unwrap_or(-1)
 }
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn swprintf(

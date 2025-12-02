@@ -128,18 +128,18 @@ unsafe extern "C" {
 //NOTE for the following two functions, to see why they're implemented slightly differently from their intended behavior, read
 //     https://git.musl-libc.org/cgit/musl/commit/?id=583e55122e767b1586286a0d9c35e2a4027998ab
 #[unsafe(no_mangle)]
-unsafe extern "C" fn __sigsetjmp_tail(jb: *mut u64, ret: i32) -> i32 {
-    let set = jb.wrapping_add(9);
-    if ret > 0 {
-        sigprocmask(SIG_SETMASK, set, ptr::null_mut());
-    } else {
+unsafe extern "C" fn __sigsetjmp_tail(jb: *mut u64, savemask: i32) -> i32 {
+    if savemask != 0 {
+        let set = jb.offset(setjmp::_JBLEN as isize);
         sigprocmask(SIG_SETMASK, ptr::null_mut(), set);
     }
-    ret
+    0
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn siglongjmp(jb: *mut u64, ret: i32) {
+    let set = jb.offset(setjmp::_JBLEN as isize);
+    sigprocmask(SIG_SETMASK, set, ptr::null_mut());
     setjmp::longjmp(jb, ret);
 }
 
