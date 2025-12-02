@@ -45,6 +45,9 @@ pub mod proc;
 #[path = "../../src/platform/auxv_defs.rs"]
 pub mod auxv_defs;
 
+// Local Redox-specific auxv constants (unconditionally compiled)
+mod auxv_constants;
+
 pub mod protocol;
 pub mod signal;
 pub mod sync;

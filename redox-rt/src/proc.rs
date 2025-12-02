@@ -7,6 +7,7 @@ use core::{
 use crate::{
     DYNAMIC_PROC_INFO, RtTcb, StaticProcInfo,
     arch::*,
+    auxv_constants::*,
     auxv_defs::*,
     protocol::{ProcCall, ThreadCall},
     read_proc_meta,

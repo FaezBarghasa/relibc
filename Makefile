@@ -61,7 +61,8 @@ RANLIB ?= ranlib
 STRIP ?= strip
 
 # Retrieve the internal include path for the compiler (GCC/Clang).
-CC_INTERNAL_INCS := $(shell $(CC) -print-file-name=include)
+INCLUDE_FILENAME := include
+CC_INTERNAL_INCS := $(shell $(CC) -print-file-name=$(INCLUDE_FILENAME))
 CC_INTERNAL_INCS_FIXED := $(shell $(CC) -print-file-name=include-fixed)
 
 # Construct the flags. We only add the directory if it exists.
