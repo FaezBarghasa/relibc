@@ -176,6 +176,7 @@ EXPECT_NAMES=\
 	wctype/towupper \
 	mknod \
 	mknodat \
+	pthread/tls \
 	$(REDOX_FAILING_TESTS)
 	# TODO: Fix this
 	# netdb/netdb \

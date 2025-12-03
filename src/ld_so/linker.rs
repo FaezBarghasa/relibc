@@ -1,5 +1,5 @@
 use alloc::{
-    collections::BTreeMap,
+    collections::{BTreeMap, VecDeque},
     rc::Rc,
     string::{String, ToString},
     sync::{Arc, Weak},
@@ -392,6 +392,7 @@ pub struct Linker {
     tls_size: usize,
     objects: BTreeMap<usize, Arc<DSO>>,
     name_to_object_id_map: BTreeMap<String, usize>,
+    library_cache: BTreeMap<String, String>,
     pub cbs: Rc<RefCell<LinkerCallbacks>>,
 }
 
@@ -406,6 +407,7 @@ impl Linker {
             tls_size: 0,
             objects: BTreeMap::new(),
             name_to_object_id_map: BTreeMap::new(),
+            library_cache: BTreeMap::new(),
             cbs: Rc::new(RefCell::new(LinkerCallbacks::new())),
         }
     }
@@ -594,7 +596,7 @@ impl Linker {
         let mut new_objects = Vec::new();
         let mut objects_data = Vec::new();
         let mut tcb_masters = Vec::new();
-        let loaded_dso = self.load_objects_recursive(
+        let loaded_dso = self.load_objects_bfs(
             path,
             runpath,
             base_addr,
@@ -602,7 +604,6 @@ impl Linker {
             &mut new_objects,
             &mut objects_data,
             &mut tcb_masters,
-            None,
             scope,
         )?;
 
@@ -730,20 +731,7 @@ impl Linker {
         self.objects.insert(obj.id, obj);
     }
 
-    /// Loads the specified object and all of its dependencies.
-    ///
-    /// `new_objects` contains any new objects that were loaded. Order is
-    /// reverse of how the scope is populated.
-    ///
-    /// The scope is populated such that the loaded objects are in breadth-first
-    /// order. This means that first the requested object is added to the scope,
-    /// and then its dependencies are added in the order of their respective
-    /// `DT_NEEDED` entries in the requested object. This is done recursively
-    /// until all dependencies have been loaded.
-    ///
-    /// If a dependency has already been loaded, it is *not* added to the scope
-    /// nor to `new_objects`.
-    fn load_objects_recursive<'a>(
+    fn load_objects_bfs<'a>(
         &mut self,
         name: &str,
         parent_runpath: &Option<String>,
@@ -752,122 +740,98 @@ impl Linker {
         new_objects: &mut Vec<Arc<DSO>>,
         objects_data: &mut Vec<Vec<ProgramHeader>>,
         tcb_masters: &mut Vec<Master>,
-        // Scope of the object that caused this object to be loaded.
-        dependent_scope: Option<&mut Scope>,
         scope_kind: ScopeKind,
     ) -> Result<Arc<DSO>> {
-        // fixme: double lookup slow
-        if let Some(id) = self.name_to_object_id_map.get(name) {
-            if let Some(obj) = self.objects.get(id) {
-                if let Some(scope) = dependent_scope {
-                    match scope_kind {
-                        ScopeKind::Local => scope.add(obj),
-                        ScopeKind::Global => GLOBAL_SCOPE.write().add(obj),
-                    }
-                } else if scope_kind == ScopeKind::Global {
-                    GLOBAL_SCOPE.write().add(obj);
-                }
-                return Ok(obj.clone());
-            }
-        } else if let Some(obj) = new_objects.iter().find(|o| o.name == name) {
-            if let Some(scope) = dependent_scope {
-                match scope_kind {
-                    ScopeKind::Local => scope.add(obj),
-                    ScopeKind::Global => GLOBAL_SCOPE.write().add(obj),
-                }
-            } else if scope_kind == ScopeKind::Global {
-                GLOBAL_SCOPE.write().add(obj);
-            }
-            return Ok(obj.clone());
-        }
+        let mut queue = VecDeque::new();
+        queue.push_back(name.to_string());
 
-        let debug = self.config.debug_flags.contains(DebugFlags::LOAD);
+        let mut loaded_dso = None;
 
-        let path = self.search_object(name, parent_runpath)?;
-        let file = self.read_file(&path)?;
-        let data = file.data();
-        let (obj, tcb_master, elf) = DSO::new(
-            &path,
-            data,
-            base_addr,
-            dlopened,
-            self.next_object_id,
-            self.next_tls_module_id,
-            // Ensure TLS is aligned to 16 bytes for SSE
-            self.tls_size.next_multiple_of(16),
-        )
-        .map_err(|err| {
-            if debug {
-                eprintln!("[ld.so]: failed to load '{}': {}", name, err)
+        while let Some(name) = queue.pop_front() {
+            if self.name_to_object_id_map.contains_key(&name) {
+                continue;
             }
 
-            DlError::Malformed
-        })?;
+            let debug = self.config.debug_flags.contains(DebugFlags::LOAD);
 
-        if debug {
-            eprintln!(
-                "[ld.so]: loading object: {} at {:#x}:{:#x} (pie: {})",
-                name,
-                obj.mmap.as_ptr() as usize,
-                obj.mmap.as_ptr() as usize + obj.mmap.len(),
-                obj.pie,
-            );
-        }
-
-        self.next_object_id += 1;
-
-        if let Some(master) = tcb_master {
-            if !dlopened {
-                self.tls_size += master.offset; // => aligned ph.p_memsz
-            }
-
-            tcb_masters.push(master);
-            self.next_tls_module_id += 1;
-        }
-
-        let runpath = obj.runpath().map(|rpath| rpath.to_string());
-        let dependencies = obj
-            .dependencies()
-            .iter()
-            .map(|dep| dep.to_string())
-            .collect::<Vec<_>>();
-
-        let obj = Arc::new(obj);
-        let mut scope = Scope::local();
-
-        if let Some(dependent_scope) = dependent_scope {
-            match scope_kind {
-                ScopeKind::Local => dependent_scope.add(&obj),
-                ScopeKind::Global => GLOBAL_SCOPE.write().add(&obj),
-            }
-        } else if let ScopeKind::Global = scope_kind {
-            GLOBAL_SCOPE.write().add(&obj);
-        }
-
-        for dep_name in dependencies.iter() {
-            self.load_objects_recursive(
-                dep_name,
-                &runpath,
-                None,
+            let path = self.search_object(&name, parent_runpath)?;
+            let file = self.read_file(&path)?;
+            let data = file.data();
+            let (obj, tcb_master, elf) = DSO::new(
+                &path,
+                data,
+                base_addr,
                 dlopened,
-                new_objects,
-                objects_data,
-                tcb_masters,
-                Some(&mut scope),
-                scope_kind,
-            )?;
+                self.next_object_id,
+                self.next_tls_module_id,
+                // Ensure TLS is aligned to 16 bytes for SSE
+                self.tls_size.next_multiple_of(16),
+            )
+            .map_err(|err| {
+                if debug {
+                    eprintln!("[ld.so]: failed to load '{}': {}", name, err)
+                }
+
+                DlError::Malformed
+            })?;
+
+            if debug {
+                eprintln!(
+                    "[ld.so]: loading object: {} at {:#x}:{:#x} (pie: {})",
+                    name,
+                    obj.mmap.as_ptr() as usize,
+                    obj.mmap.as_ptr() as usize + obj.mmap.len(),
+                    obj.pie,
+                );
+            }
+
+            self.next_object_id += 1;
+
+            if let Some(master) = tcb_master {
+                if !dlopened {
+                    self.tls_size += master.offset; // => aligned ph.p_memsz
+                }
+
+                tcb_masters.push(master);
+                self.next_tls_module_id += 1;
+            }
+
+            let dependencies = obj
+                .dependencies()
+                .iter()
+                .map(|dep| dep.to_string())
+                .collect::<Vec<_>>();
+
+            let obj = Arc::new(obj);
+            let mut scope = Scope::local();
+
+            if scope_kind == ScopeKind::Global {
+                GLOBAL_SCOPE.write().add(&obj);
+            }
+
+            for dep_name in dependencies.iter() {
+                queue.push_back(dep_name.clone());
+            }
+
+            objects_data.push(elf);
+            new_objects.push(obj.clone());
+
+            scope.set_owner(Arc::downgrade(&obj));
+            obj.scope.call_once(|| scope);
+
+            if loaded_dso.is_none() {
+                loaded_dso = Some(obj);
+            }
         }
 
-        objects_data.push(elf);
-        new_objects.push(obj.clone());
-
-        scope.set_owner(Arc::downgrade(&obj));
-        obj.scope.call_once(|| scope);
-
-        Ok(obj)
+        loaded_dso.ok_or(DlError::NotFound)
     }
 
-    fn search_object(&self, name: &str, parent_runpath: &Option<String>) -> Result<String> {
+    fn search_object(&mut self, name: &str, parent_runpath: &Option<String>) -> Result<String> {
+        if let Some(path) = self.library_cache.get(name) {
+            return Ok(path.clone());
+        }
+
         let debug = self.config.debug_flags.contains(DebugFlags::SEARCH);
         if debug {
             eprintln!("[ld.so]: looking for '{}'", name);
@@ -878,6 +842,7 @@ impl Linker {
             if debug {
                 eprintln!("[ld.so]: found at '{}'!", full_path);
             }
+            self.library_cache.insert(name.to_string(), full_path.clone());
             return Ok(full_path);
         } else {
             let mut search_paths = Vec::new();
@@ -897,6 +862,7 @@ impl Linker {
                     if debug {
                         eprintln!("[ld.so]: found at '{}'!", full_path);
                     }
+                    self.library_cache.insert(name.to_string(), full_path.clone());
                     return Ok(full_path);
                 }
             }

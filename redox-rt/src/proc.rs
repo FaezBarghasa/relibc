@@ -9,6 +9,7 @@ use crate::{
     arch::*,
     auxv_constants::*,
     auxv_defs::*,
+    ld_so,
     protocol::{ProcCall, ThreadCall},
     read_proc_meta,
     sys::{proc_call, thread_call},
@@ -22,7 +23,7 @@ use goblin::elf32::{
     header::Header,
     program_header::program_header32::{PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD, ProgramHeader},
 };
-#[cfg(target_pointer_width = "64")]
+#[cfg(target_pointer_pointer_width = "64")]
 use goblin::elf64::{
     header::Header,
     program_header::program_header64::{PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD, ProgramHeader},
@@ -34,6 +35,35 @@ use syscall::{
     error::*,
     flag::{MapFlags, SEEK_SET},
 };
+
+pub fn exit(status: u8) -> ! {
+    exit_impl(Some(status as u64));
+}
+pub fn abort() -> ! {
+    exit_impl(None);
+}
+
+fn exit_impl(value: Option<u64>) -> ! {
+    let proc_info = crate::static_proc_info();
+
+    unsafe {
+        ld_so::fini();
+    }
+
+    if proc_info.has_proc_fd {
+        let proc_fd = unsafe { proc_info.proc_fd.assume_init_ref() };
+        let _ = proc_call(
+            proc_fd.as_raw_fd(),
+            &mut [],
+            CallFlags::empty(),
+            &[ProcCall::Exit as u64, value.unwrap_or(128 + 6)],
+        );
+    }
+
+    loop {
+        let _ = syscall::exit(value.unwrap_or(0));
+    }
+}
 
 pub enum FexecResult {
     Normal {
@@ -624,7 +654,7 @@ impl<'a> MmapGuard<'a> {
                     offset,
                     size: self.size,
                     flags,
-                    address: self.base,
+                    address: 0, // let kernel decide
                 },
             )?
         };
@@ -827,7 +857,7 @@ pub fn fork_inner(initial_rsp: *mut usize, args: &ForkArgs) -> Result<usize> {
             // This must be done before the address space is copied.
             unsafe {
                 let proc_fd = new_proc_fd.as_ref().map_or(usize::MAX, |p| p.as_raw_fd());
-                //let _ = syscall::write(1, alloc::format!("FDTBL{}PROC{}THR{}\n", *cur_filetable_fd, proc_fd, *new_thr_fd).as_bytes());
+                //let _ = syscall::write(1, alloc::format!("CUR{cur_filetable_fd}PROC{new_proc_fd}THR{new_thr_fd}\n").as_bytes());
                 initial_rsp.write(cur_filetable_fd.as_raw_fd());
                 initial_rsp.add(1).write(proc_fd);
                 initial_rsp.add(2).write(new_thr_fd.as_raw_fd());
@@ -973,7 +1003,7 @@ pub fn new_child_process(args: &ForkArgs<'_>) -> Result<NewChildProc> {
                 proc_info.has_proc_fd,
                 "cannot use ForkArgs::Managed without an existing proc info"
             );
-            let this_proc_fd = unsafe { proc_info.proc_fd.assume_init_ref() };
+            let this_proc_fd = unsafe { proc_info.proc.assume_init_ref() };
             let child_proc_fd = this_proc_fd.dup(b"fork")?.to_upper()?;
             let only_thread_fd = child_proc_fd.dup(b"thread-0")?.to_upper()?;
             let meta = read_proc_meta(&child_proc_fd)?;

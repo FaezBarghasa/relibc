@@ -20,6 +20,7 @@ use crate::{
     platform::{Pal, Sys, types::c_void},
 };
 use alloc::{
+    collections::BTreeMap,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -329,6 +330,7 @@ pub struct DSO {
     pub tls_offset: usize,
 
     pub(super) dynamic: Dynamic<'static>,
+    symbol_map: BTreeMap<String, SymbolIndex>,
 
     pub scope: spin::Once<Scope>,
     /// Position Independent Executable.
@@ -363,6 +365,13 @@ impl DSO {
             elf.entry() as usize
         };
 
+        let mut symbol_map = BTreeMap::new();
+        for (i, sym) in dynamic.symbols.iter().enumerate() {
+            if let Some(name) = dynamic.symbol_name(SymbolIndex(i)) {
+                symbol_map.insert(name.to_string(), SymbolIndex(i));
+            }
+        }
+
         let dso = DSO {
             name,
             id,
@@ -378,6 +387,7 @@ impl DSO {
 
             pie: is_pie_enabled(&elf),
             dynamic,
+            symbol_map,
             scope: spin::Once::new(),
         };
 
@@ -406,13 +416,8 @@ impl DSO {
     }
 
     pub fn get_sym<'a>(&self, name: &'a str) -> Option<(Symbol<'a>, SymbolBinding)> {
-        let (_, sym) = self.dynamic.hash_table.find(
-            name,
-            None,
-            &self.dynamic.symbols,
-            self.dynamic.dynstrtab,
-            &VersionTable::default(),
-        )?;
+        let sym_idx = self.symbol_map.get(name)?;
+        let sym = self.dynamic.symbol(*sym_idx)?;
 
         if sym.st_shndx(NativeEndian) == elf::SHN_UNDEF {
             return None;

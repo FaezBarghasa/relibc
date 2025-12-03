@@ -12,13 +12,8 @@ pub struct InnerRwLock {
 }
 // PTHREAD_RWLOCK_INITIALIZER is defined as "all zeroes".
 
-const WAITING_WR: u32 = 1 << (u32::BITS - 1);
-const COUNT_MASK: u32 = WAITING_WR - 1;
-const EXCLUSIVE: u32 = COUNT_MASK;
-
-// TODO: Optimize for short waits and long waits, using AtomicLock::wait_until, but still
-// supporting timeouts.
-// TODO: Add futex ops that use bitmasks.
+const WRITER_BIT: u32 = 1 << (u32::BITS - 1);
+const READER_MASK: u32 = !WRITER_BIT;
 
 impl InnerRwLock {
     pub const fn new(_pshared: Pshared) -> Self {
@@ -27,125 +22,113 @@ impl InnerRwLock {
         }
     }
     pub fn acquire_write_lock(&self, deadline: Option<&timespec>) {
-        let mut waiting_wr = self.state.load(Ordering::Relaxed) & WAITING_WR;
+        // Spin a few times, since this is usually faster than a syscall.
+        for _ in 0..100 {
+            if self.try_acquire_write_lock().is_ok() {
+                return;
+            }
+            core::hint::spin_loop();
+        }
 
         loop {
-            match self.state.compare_exchange_weak(
-                waiting_wr,
-                EXCLUSIVE,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return,
-                Err(actual) => {
-                    let expected = actual;
-                    let expected = if actual & COUNT_MASK != EXCLUSIVE {
-                        // Set the exclusive bit, but only if we're waiting for readers, to avoid
-                        // reader starvation by overprioritizing write locks.
-                        self.state.fetch_or(WAITING_WR, Ordering::Relaxed);
-
-                        actual | WAITING_WR
-                    } else {
-                        actual
-                    };
-                    waiting_wr = expected & WAITING_WR;
-
-                    if actual & COUNT_MASK > 0 {
-                        let _ = crate::sync::futex_wait(&self.state, expected, deadline);
-                    } else {
-                        // We must avoid blocking indefinitely in our `futex_wait()`, in this case
-                        // where it's possible that `self.state == expected` but our futex might
-                        // never be woken again, because it's possible that all other threads
-                        // already did their `futex_wake()` before we would've done our
-                        // `futex_wait()`.
+            let mut state = self.state.load(Ordering::Relaxed);
+            if state & WRITER_BIT == 0 {
+                match self.state.compare_exchange_weak(
+                    state,
+                    state | WRITER_BIT,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(s) => {
+                        state = s;
+                        continue;
                     }
                 }
             }
+            let _ = crate::sync::futex_wait(&self.state, state, deadline);
+        }
+
+        loop {
+            let state = self.state.load(Ordering::Relaxed);
+            if state & READER_MASK == 0 {
+                return;
+            }
+            let _ = crate::sync::futex_wait(&self.state, state, deadline);
         }
     }
     pub fn acquire_read_lock(&self, deadline: Option<&timespec>) {
-        // TODO: timeout
-        while let Err(old) = self.try_acquire_read_lock() {
-            crate::sync::futex_wait(&self.state, old, deadline);
+        // Spin a few times, since this is usually faster than a syscall.
+        for _ in 0..100 {
+            if self.try_acquire_read_lock().is_ok() {
+                return;
+            }
+            core::hint::spin_loop();
+        }
+
+        loop {
+            let state = self.state.load(Ordering::Relaxed);
+
+            if state & WRITER_BIT == 0 {
+                if self
+                    .state
+                    .compare_exchange_weak(
+                        state,
+                        state + 1,
+                        Ordering::Acquire,
+                        Ordering::Relaxed,
+                    )
+                    .is_ok()
+                {
+                    return;
+                }
+            }
+
+            // Wait for the writer to finish.
+            let _ = crate::sync::futex_wait(&self.state, state, deadline);
         }
     }
     pub fn try_acquire_read_lock(&self) -> Result<(), u32> {
-        let mut cached = self.state.load(Ordering::Acquire);
+        let mut state = self.state.load(Ordering::Acquire);
 
         loop {
-            let waiting_wr = cached & WAITING_WR;
-            let old = if cached & COUNT_MASK == EXCLUSIVE {
-                0
-            } else {
-                cached & COUNT_MASK
-            };
-            let new = old + 1;
-
-            // TODO: Return with error code instead?
-            assert_ne!(
-                new & COUNT_MASK,
-                EXCLUSIVE,
-                "maximum number of rwlock readers reached"
-            );
+            if state & WRITER_BIT != 0 {
+                return Err(state);
+            }
 
             match self.state.compare_exchange_weak(
-                (old & COUNT_MASK) | waiting_wr,
-                new | waiting_wr,
+                state,
+                state + 1,
                 Ordering::Acquire,
                 Ordering::Relaxed,
             ) {
                 Ok(_) => return Ok(()),
-
-                Err(value) if value & COUNT_MASK == EXCLUSIVE => return Err(value),
-                Err(value) => {
-                    cached = value;
-                    // TODO: SCHED_YIELD?
-                    core::hint::spin_loop();
-                }
+                Err(s) => state = s,
             }
         }
     }
     pub fn try_acquire_write_lock(&self) -> Result<(), u32> {
-        let mut waiting_wr = self.state.load(Ordering::Relaxed) & WAITING_WR;
-
-        loop {
-            match self.state.compare_exchange_weak(
-                waiting_wr,
-                EXCLUSIVE,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            ) {
-                Ok(_) => return Ok(()),
-                Err(actual) if actual & COUNT_MASK > 0 => return Err(actual),
-                Err(can_retry) => {
-                    waiting_wr = can_retry & WAITING_WR;
-
-                    core::hint::spin_loop();
-                    continue;
-                }
-            }
+        match self.state.compare_exchange(
+            0,
+            WRITER_BIT,
+            Ordering::Acquire,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => Ok(()),
+            Err(s) => Err(s),
         }
     }
 
     pub fn unlock(&self) {
         let state = self.state.load(Ordering::Relaxed);
-
-        if state & COUNT_MASK == EXCLUSIVE {
-            // Unlocking a write lock.
-
-            // This discards the writer-waiting bit, in order to ensure some level of fairness
-            // between read and write locks.
-            self.state.store(0, Ordering::Release);
-
-            let _ = crate::sync::futex_wake(&self.state, i32::MAX);
+        if state & WRITER_BIT != 0 {
+            self.state.fetch_and(!WRITER_BIT, Ordering::Release);
         } else {
-            // Unlocking a read lock. Subtract one from the reader count, but preserve the
-            // WAITING_WR bit.
-
-            if self.state.fetch_sub(1, Ordering::Release) & COUNT_MASK == 1 {
-                let _ = crate::sync::futex_wake(&self.state, i32::MAX);
-            }
+            self.state.fetch_sub(1, Ordering::Release);
         }
+
+        // Wake up waiting threads.
+        let _ = crate::sync::futex_wake(&self.state, i32::MAX);
     }
 }
 

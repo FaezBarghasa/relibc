@@ -12,12 +12,18 @@ description = "Libc-independent runtime for Redox"
 bitflags = "2"
 goblin = { version = "0.7", default-features = false, features = ["elf32", "elf64", "endian_fd"] }
 plain = "0.2"
-redox_syscall = { package = "syscall", path = "../../syscall" }
+redox_syscall = "0.5.13"
 
 generic-rt = { path = "../generic-rt", features = ["expect-tls-free"] }
 c-rt = { path = "../c-rt", optional = true }
+relibc_ld_so = { package = "relibc", path = "../../src" } # Added dependency
 
 [features]
 proc = []
 c-rt-test = ["c-rt"]
 default = ["proc"]
+
+[[test]]
+name = "tls"
+path = "tests/tls.rs"
+required-features = ["proc"]

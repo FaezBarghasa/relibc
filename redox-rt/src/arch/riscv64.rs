@@ -4,7 +4,8 @@ use crate::{
     RtTcb, Tcb,
     proc::{FdGuard, FdGuardUpper, ForkArgs, fork_inner},
     protocol::{ProcCall, RtSigInfo},
-    signal::{PosixStackt, RtSigarea, SigStack, get_sigaltstack, inner_c},
+    signal::{PROC_CONTROL_STRUCT, PosixStackt, RtSigarea, SigStack, get_sigaltstack, inner_c, Sigcontrol},
+    start::{Stack, start_main},
 };
 use core::{mem::offset_of, ptr::NonNull, sync::atomic::Ordering};
 use syscall::{data::*, error::*};
@@ -12,6 +13,36 @@ use syscall::{data::*, error::*};
 // Setup a stack starting from the very end of the address space, and then growing downwards.
 pub const STACK_TOP: usize = 1 << 47;
 pub const STACK_SIZE: usize = 1024 * 1024;
+
+#[no_mangle]
+unsafe extern "C" fn bootstrap(argc: usize, argv: *const *const i8) -> ! {
+    let envp = argv.add(argc + 1);
+    let auxv = crate::start::parse_auxv(envp);
+
+    let stack = Stack {
+        base: (argv as usize - STACK_SIZE) as *mut u8,
+        size: STACK_SIZE,
+    };
+
+    let tcb_ext = TcbExtension {
+        self_ptr: core::ptr::null_mut(),
+        stack_base: stack.base as *mut (),
+        stack_size: stack.size,
+        tls_dtv: core::ptr::null_mut(),
+        tls_dtv_len: 0,
+        tls_static_base: crate::start::TlsMaster::new(auxv).copy_to_new_tls_region()
+            .expect("failed to initialize TLS")
+            .expect("no TLS segment found in executable"),
+    };
+
+    let mut tcb = Tcb::new(stack);
+    tcb.arch = tcb_ext;
+    tcb.arch.self_ptr = &mut tcb.arch;
+
+    core::arch::asm!("mv tp, {}", in(reg) &tcb); // Reverted to original
+
+    start_main(tcb, argc, argv, envp, auxv);
+}
 
 #[derive(Debug, Default)]
 #[repr(C)]
@@ -205,7 +236,7 @@ asmfunction!(__relibc_internal_sigentry: ["
     sd   t2, ({tcb_sa_off} + {sa_tmp_t2})(t0)
     sd   t3, ({tcb_sa_off} + {sa_tmp_t3})(t0)
     sd   t4, ({tcb_sa_off} + {sa_tmp_t4})(t0)
-    ld   t4, ({tcb_sa_off} + {sa_off_pctl})(t0)
+    la t4, {pctl}
 
     // First, select signal, always pick first available bit
 99:
@@ -216,12 +247,22 @@ asmfunction!(__relibc_internal_sigentry: ["
     beqz t1, 3f
 
     // Found in first thread signal word
-    mv   t3, x0
-2:  andi t2, t1, 1
-    bnez t2, 10f
-    addi t3, t3, 1
-    srli t1, t1, 1
-    j 2b
+    ctz t3, t1
+    li t1, 1
+    sll t1, t1, t3
+    not t2, t1
+    ld t1, ({tcb_sc_off} + {sc_word})(t0)
+    and t1, t1, t2
+    amoswap.w.aq t1, t1, ({tcb_sc_off} + {sc_word})(t0)
+    and t1, t1, t2
+    bnez t1, 99b
+
+    sll t1, t3, 3
+    add t1, t1, t0
+    ld t1, ({tcb_sc_off} + {sc_sender_infos})(t1)
+    sd t1, ({tcb_sa_off} + {sa_tmp_id_inf})(t0)
+    addi t3, t3, 64
+    j 9f
 
     // If no unblocked thread signal was found, check for process.
     // This is competitive; we need to atomically check if *we* cleared the process-wide pending
@@ -230,22 +271,19 @@ asmfunction!(__relibc_internal_sigentry: ["
     and  t1, t1, t2
     beqz t1, 3f
     // Found in first process signal word
-    li   t3, -1
-2:  andi t2, t1, 1
-    addi t3, t3, 1
-    srli t1, t1, 1
-    beqz t2, 2b
-    slli t1, t3, 3 // * 8 == size_of SenderInfo
-    add  t1, t1, t4
-    ld   t1, {pctl_off_sender_infos}(t1)
-    sd   t1, ({tcb_sa_off} + {sa_tmp_id_inf})(t0)
-    li   t1, 1
-    sll  t1, t1, t3
-    not  t1, t1
-    addi t2, t4, {pctl_off_pending}
-    amoand.w.aq t2, t1, (t2)
-    and  t1, t1, t2
-    bne  t1, t2, 9f
+    ctz t3, t1
+    li t1, 1
+    sll t1, t1, t3
+    not t2, t1
+    amoand.w.aq t1, t2, ({pctl_off_pending})(t4)
+    and t1, t1, t2
+    bnez t1, 99b
+
+    sll t1, t3, 3
+    add t1, t1, t4
+    ld t1, {pctl_off_sender_infos}(t1)
+    sd t1, ({tcb_sa_off} + {sa_tmp_id_inf})(t0)
+    j 9f
 
 3:
     // Read second signal word - both process and thread simultaneously.
@@ -256,14 +294,10 @@ asmfunction!(__relibc_internal_sigentry: ["
     srli t2, t1, 32
     and  t4, t2, t4
     beqz t4, 7f
-    li   t3, -1
-2:  andi t2, t4, 1
-    addi t3, t3, 1
-    srli t4, t4, 1
-    beqz t2, 2b
-    li   t2, 1
-    sll  t2, t2, t3
-    and  t1, t1, t2
+    ctz t3, t4
+    li t2, 1
+    sll t2, t2, t3
+    and t1, t1, t2
     addi t3, t3, 32
     bnez t1, 10f // thread signal
 
@@ -271,8 +305,6 @@ asmfunction!(__relibc_internal_sigentry: ["
 
     // SYS_CALL(fd, payload_base, payload_len, metadata_len, metadata_base)
     // a7       a0  a1            a2           a3            a4
-
-    // TODO: This SYS_CALL invocation has not yet been tested due to toolchain issues.
 
     sd   a0, ({tcb_sa_off} + {sa_tmp_a0})(t0)
     sd   a1, ({tcb_sa_off} + {sa_tmp_a1})(t0)
@@ -286,9 +318,8 @@ asmfunction!(__relibc_internal_sigentry: ["
     sd a2, (a1)
     li a2, {RTINF_SIZE}
     li a3, 1
-1337:
-    auipc a4, %pcrel_hi({proc_fd})
-    addi a4, a4, %pcrel_lo(1337b)
+    la a4, {proc_call_sigdeq}
+    ld a0, {proc_fd}(gp)
     ecall
     ld   a3, ({tcb_sa_off} + {sa_tmp_a3})(t0)
     ld   a4, ({tcb_sa_off} + {sa_tmp_a4})(t0)
@@ -317,7 +348,7 @@ asmfunction!(__relibc_internal_sigentry: ["
     // By now we have selected a signal, stored in eax (6-bit). We now need to choose whether or
     // not to switch to the alternate signal stack. If SA_ONSTACK is clear for this signal, then
     // skip the sigaltstack logic.
-    ld   t4, ({tcb_sa_off} + {sa_off_pctl})(t0)
+    la   t4, {pctl}
     andi t1, t3, 63
     slli t1, t1, 4 // * 16 == size_of RawAction
     add  t1, t1, t4
@@ -448,10 +479,10 @@ asmfunction!(__relibc_internal_sigentry: ["
     fld  f25, (25 * 8)(t0)
     fld  f26, (26 * 8)(t0)
     fld  f27, (27 * 8)(t0)
-    fld  f28, (28 * 8)(t0)
-    fld  f29, (29 * 8)(t0)
-    fld  f30, (30 * 8)(t0)
-    fld  f31, (31 * 8)(t0)
+    fld  f28, (28 * 8)(sp)
+    fld  f29, (29 * 8)(sp)
+    fld  f30, (30 * 8)(sp)
+    fld  f31, (31 * 8)(sp)
     lw   t1, (32 * 8)(t0)
     csrw fcsr, t1
 
@@ -558,9 +589,11 @@ __relibc_internal_sigentry_crit_fifth:
     inner = sym inner_c,
     pctl_off_pending = const offset_of!(SigProcControl, pending),
     pctl_off_sender_infos = const offset_of!(SigProcControl, sender_infos),
+    pctl = sym PROC_CONTROL_STRUCT,
     SYS_CALL = const syscall::SYS_CALL,
-    RTINF_SIZE = const size_of::<RtSigInfo>(),
+    RTINF_SIZE = const core::mem::size_of::<RtSigInfo>(),
     proc_fd = sym PROC_FD,
+    proc_call_sigdeq = sym PROC_CALL_SIGDEQ,
 ]);
 
 asmfunction!(__relibc_internal_rlct_clone_ret: ["
@@ -596,7 +629,7 @@ pub unsafe fn manually_enter_trampoline() {
         Ordering::Release,
     );
     ctl.saved_archdep_reg.set(0);
-    let ip_location = &ctl.saved_ip as *const _ as usize;
+    let ip_location = &ctl.as_ptr().cast::<u8>().add(offset_of!(RtSigarea, control) + offset_of!(Sigcontrol, saved_ip));
 
     core::arch::asm!("
         jal 2f
@@ -650,4 +683,4 @@ pub unsafe fn arch_pre(stack: &mut SigStack, area: &mut SigArea) -> PosixStackt 
     get_sigaltstack(area, stack.regs.int_regs[1] as usize).into()
 }
 pub(crate) static PROC_FD: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::MAX);
-static PROC_CALL: [usize; 1] = [ProcCall::Sigdeq as usize];
+static PROC_CALL_SIGDEQ: u64 = ProcCall::Sigdeq as u64;

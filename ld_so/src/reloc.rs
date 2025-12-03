@@ -7,18 +7,6 @@ use crate::header::elf;
 use crate::linux_parity::resolve_ifunc;
 use crate::tcb::Tcb;
 
-/// Performs a single relocation.
-///
-/// # Arguments
-/// * `r_type`: The raw relocation type.
-/// * `sym_val`: The symbol's value (Virtual Address for normal symbols, Offset for TLS).
-/// * `sym_size`: Size of the symbol.
-/// * `reloc_addr`: Memory address to patch.
-/// * `addend`: Relocation addend.
-/// * `base_addr`: Load base of the object being relocated.
-/// * `tls_module_id`: The ID of the module *defining* the symbol (for DTPMOD).
-/// * `tls_offset`: The offset of the defining module within the static TLS block (for TPOFF).
-/// * `static_tls_size`: Total size of the static TLS block (used for x86_64 TPOFF calculations).
 pub unsafe fn relocate(
     r_type: u32,
     sym_val: usize,
@@ -43,21 +31,10 @@ pub unsafe fn relocate(
                 let resolver = base_addr.wrapping_add(val);
                 *ptr = resolve_ifunc(resolver);
             }
-            // --- TLS Relocations (Variant II) ---
-            // DTPMOD64 (16): ID of the module containing the symbol.
-            16 => *ptr = tls_module_id,
-            // DTPOFF64 (17): Offset within that module's TLS block.
-            17 => *ptr = sym_val.wrapping_add(val),
-            // TPOFF64 (18): Offset from the Thread Pointer (FS).
-            // Variant II (x86): The TLS block is located *below* the TCB (FS register).
-            // addresses are negative relative to FS.
-            // Structure: [ TLS Block (size) ] [ TCB ]
-            //                                 ^ %fs
-            // The offset is calculated as: (ModuleOffset + SymbolOffset) - TotalStaticSize + Addend
-            18 => {
+            elf::R_X86_64_DTPMOD64 => *ptr = tls_module_id,
+            elf::R_X86_64_DTPOFF64 => *ptr = sym_val.wrapping_add(val),
+            elf::R_X86_64_TPOFF64 => {
                 let offset_from_start = tls_offset.wrapping_add(sym_val).wrapping_add(val);
-                // We subtract static_tls_size because the block ends at %fs.
-                // e.g. if size is 1024, and we are at offset 0, result is -1024.
                 *ptr = offset_from_start.wrapping_sub(static_tls_size);
             }
             _ => return false,
@@ -67,6 +44,7 @@ pub unsafe fn relocate(
 
     #[cfg(target_arch = "aarch64")]
     {
+        let ptr32 = reloc_addr as *mut u32;
         match r_type {
             elf::R_AARCH64_ABS64 | elf::R_AARCH64_GLOB_DAT | elf::R_AARCH64_JUMP_SLOT => {
                 *ptr = sym_val.wrapping_add(val);
@@ -76,19 +54,48 @@ pub unsafe fn relocate(
                 let resolver = base_addr.wrapping_add(val);
                 *ptr = resolve_ifunc(resolver);
             }
-            // --- TLS Relocations (Variant I) ---
-            // TLS_DTPMOD64 (1028)
-            1028 => *ptr = tls_module_id,
-            // TLS_DTPREL64 (1029)
-            1029 => *ptr = sym_val.wrapping_add(val),
-            // TLS_TPREL64 (1030): Offset from Thread Pointer (TPIDR_EL0).
-            // Variant I: TCB is at TP. TLS follows TCB.
-            // Structure: [ TCB ] [ TLS Block ]
-            //            ^ %tp
-            // Offset = Align(TCB_SIZE) + ModuleOffset + SymbolOffset + Addend
-            1030 => {
+            elf::R_AARCH64_ADD_ABS_LO12_NC => {
+                let sym_val_lo12 = sym_val.wrapping_add(val) & 0xFFF;
+                *ptr32 = (*ptr32 & 0xFFFFF000) | (sym_val_lo12 as u32);
+            }
+            elf::R_AARCH64_ADR_PREL_LO21 => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let imm21 = (diff as i32 & 0x1FFFFF) as u32;
+                *ptr32 = (*ptr32 & 0xFFF8001F) | (imm21 << 5);
+            }
+            elf::R_AARCH64_ADR_PREL_PG_HI21 => {
+                let page_mask = !0xFFF;
+                let sym_page = sym_val.wrapping_add(val) & page_mask;
+                let reloc_page = reloc_addr & page_mask;
+                let diff = sym_page.wrapping_sub(reloc_page);
+                let imm21 = ((diff as i64 >> 12) & 0x1FFFFF) as u32;
+                *ptr32 = (*ptr32 & 0xFFF8001F) | (imm21 << 5);
+            }
+            elf::R_AARCH64_CALL26 | elf::R_AARCH64_JUMP26 => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let imm26 = (diff as i32 >> 2) & 0x3FFFFFF;
+                *ptr32 = (*ptr32 & 0xFC000000) | (imm26 as u32);
+            }
+            elf::R_AARCH64_MOVW_UABS_G0_NC => {
+                let word = sym_val.wrapping_add(val) as u32 & 0xFFFF;
+                *ptr32 = (*ptr32 & 0xFFE0001F) | (word << 5);
+            }
+            elf::R_AARCH64_MOVW_UABS_G1_NC => {
+                let word = (sym_val.wrapping_add(val) >> 16) as u32 & 0xFFFF;
+                *ptr32 = (*ptr32 & 0xFFE0001F) | (word << 5);
+            }
+            elf::R_AARCH64_MOVW_UABS_G2_NC => {
+                let word = (sym_val.wrapping_add(val) >> 32) as u32 & 0xFFFF;
+                *ptr32 = (*ptr32 & 0xFFE0001F) | (word << 5);
+            }
+            elf::R_AARCH64_MOVW_UABS_G3 => {
+                let word = (sym_val.wrapping_add(val) >> 48) as u32 & 0xFFFF;
+                *ptr32 = (*ptr32 & 0xFFE0001F) | (word << 5);
+            }
+            elf::R_AARCH64_TLS_DTPMOD64 => *ptr = tls_module_id,
+            elf::R_AARCH64_TLS_DTPREL64 => *ptr = sym_val.wrapping_add(val),
+            elf::R_AARCH64_TLS_TPREL64 => {
                 let tcb_size = size_of::<Tcb>();
-                // Ensure 16-byte alignment for TCB size
                 let tcb_aligned = (tcb_size + 15) & !15;
                 *ptr = tcb_aligned.wrapping_add(tls_offset).wrapping_add(sym_val).wrapping_add(val);
             }
@@ -99,22 +106,68 @@ pub unsafe fn relocate(
 
     #[cfg(target_arch = "riscv64")]
     {
+        let ptr16 = reloc_addr as *mut u16;
+        let ptr32 = reloc_addr as *mut u32;
         match r_type {
             elf::R_RISCV_64 => *ptr = sym_val.wrapping_add(val),
             elf::R_RISCV_JUMP_SLOT => *ptr = sym_val,
             elf::R_RISCV_RELATIVE => *ptr = base_addr.wrapping_add(val),
-            58 => { // R_RISCV_IRELATIVE
+            elf::R_RISCV_IRELATIVE => {
                 let resolver = base_addr.wrapping_add(val);
                 *ptr = resolve_ifunc(resolver);
             }
-            // --- TLS Relocations (Variant I) ---
-            // R_RISCV_TLS_DTPMOD64 (7)
-            7 => *ptr = tls_module_id,
-            // R_RISCV_TLS_DTPREL64 (8)
-            8 => *ptr = sym_val.wrapping_add(val),
-            // R_RISCV_TLS_TPREL64 (9)
-            // Logic identical to AArch64 (Variant I)
-            9 => {
+            elf::R_RISCV_ADD32 => { *(ptr as *mut u32) = (*(ptr as *mut u32)).wrapping_add(sym_val as u32).wrapping_add(val as u32); }
+            elf::R_RISCV_ADD64 => { *ptr = (*ptr).wrapping_add(sym_val).wrapping_add(val); }
+            elf::R_RISCV_SUB32 => { *(ptr as *mut u32) = (*(ptr as *mut u32)).wrapping_sub(sym_val as u32).wrapping_sub(val as u32); }
+            elf::R_RISCV_SUB64 => { *ptr = (*ptr).wrapping_sub(sym_val).wrapping_sub(val); }
+            elf::R_RISCV_CALL | elf::R_RISCV_CALL_PLT => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let hi20 = (diff + 0x800) & 0xFFFFF000;
+                let lo12 = diff & 0xFFF;
+                *ptr32 = (*ptr32 & 0xFFF) | (hi20 as u32);
+                *(ptr32.add(1)) = (*(ptr32.add(1)) & 0xFFFFF) | ((lo12 as u32) << 20);
+            }
+            elf::R_RISCV_GOT_HI20 | elf::R_RISCV_PCREL_HI20 => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let hi20 = (diff + 0x800) & 0xFFFFF000;
+                *ptr32 = (*ptr32 & 0xFFF) | (hi20 as u32);
+            }
+            elf::R_RISCV_HI20 => {
+                let val = sym_val.wrapping_add(val);
+                let hi20 = (val + 0x800) & 0xFFFFF000;
+                *ptr32 = (*ptr32 & 0xFFF) | (hi20 as u32);
+            }
+            elf::R_RISCV_LO12_I | elf::R_RISCV_PCREL_LO12_I => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let lo12 = diff & 0xFFF;
+                *ptr32 = (*ptr32 & 0xFFFFF) | ((lo12 as u32) << 20);
+            }
+            elf::R_RISCV_LO12_S | elf::R_RISCV_PCREL_LO12_S => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let lo12 = diff & 0xFFF;
+                let imm11_5 = (lo12 >> 5) & 0x7F;
+                let imm4_0 = lo12 & 0x1F;
+                *ptr32 = (*ptr32 & 0x1FFF07F) | ((imm11_5 as u32) << 25) | ((imm4_0 as u32) << 7);
+            }
+            elf::R_RISCV_ALIGN => { /* NOP */ }
+            elf::R_RISCV_RVC_BRANCH => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let imm8 = (diff >> 1) & 0xFF;
+                let imm4_3 = (imm8 >> 3) & 0x3;
+                let imm2_1 = (imm8 >> 1) & 0x3;
+                let imm7 = (imm8 >> 7) & 0x1;
+                let imm6 = (imm8 >> 6) & 0x1;
+                let imm5 = (imm8 >> 5) & 0x1;
+                *ptr16 = (*ptr16 & 0xE383) | ((imm4_3 as u16) << 3) | ((imm2_1 as u16) << 10) | ((imm7 as u16) << 12) | ((imm6 as u16) << 2) | ((imm5 as u16) << 5);
+            }
+            elf::R_RISCV_RVC_JUMP => {
+                let diff = sym_val.wrapping_add(val).wrapping_sub(reloc_addr);
+                let imm11 = (diff >> 1) & 0x7FF;
+                *ptr16 = (*ptr16 & 0xE003) | (((imm11 >> 5) & 0x1) << 12) | (((imm11 >> 1) & 0xF) << 3) | (((imm11 >> 7) & 0x1) << 7) | (((imm11 >> 6) & 0x1) << 6) | (((imm11 >> 10) & 0x1) << 11) | (((imm11 >> 8) & 0x3) << 9) | (((imm11 >> 4) & 0x1) << 8);
+            }
+            elf::R_RISCV_TLS_DTPMOD64 => *ptr = tls_module_id,
+            elf::R_RISCV_TLS_DTPREL64 => *ptr = sym_val.wrapping_add(val),
+            elf::R_RISCV_TLS_TPREL64 => {
                 let tcb_size = size_of::<Tcb>();
                 let tcb_aligned = (tcb_size + 15) & !15;
                 *ptr = tcb_aligned.wrapping_add(tls_offset).wrapping_add(sym_val).wrapping_add(val);
@@ -142,14 +195,9 @@ pub unsafe fn relocate_copy(
         (cfg!(target_arch = "riscv64") && r_type == elf::R_RISCV_COPY);
 
     if is_copy {
-        // 
-        // R_COPY copies initial data from the shared library to the executable's .bss
-        // so the executable can access the variable directly via absolute addressing.
         let src = src_addr as *const u8;
         let dst = dst_addr as *mut u8;
-        for i in 0..size {
-            *dst.add(i) = *src.add(i);
-        }
+        core::ptr::copy_nonoverlapping(src, dst, size);
         true
     } else {
         false

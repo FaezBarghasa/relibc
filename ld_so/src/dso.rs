@@ -8,7 +8,7 @@ use alloc::{
     string::{String, ToString},
     vec::Vec,
 };
-use core::{slice, str};
+use core::{slice, str, mem};
 
 use crate::{
     gnu_hash::GnuHash,
@@ -19,17 +19,34 @@ use crate::{
 pub struct DSO {
     pub name: String,
     pub base_addr: usize,
+    pub phdrs: &'static [elf::Phdr],
     pub entry_point: usize,
     pub dynamic: Option<&'static [elf::Dyn]>,
+    
+    // Dynamic section values
     pub sym_table: Option<&'static [elf::Sym]>,
     pub str_table: Option<&'static [u8]>,
     pub gnu_hash: Option<GnuHash>,
     pub sysv_hash: Option<&'static [u32]>,
+    
+    pub rela_dyn: Option<&'static [elf::Rela]>,
+    pub rela_plt: Option<&'static [elf::Rela]>,
+    pub rela_count: usize,
+    
+    pub plt_got: Option<*const usize>,
+    
+    pub init: Option<unsafe extern "C" fn()>,
+    pub init_array: Option<&'static [unsafe extern "C" fn()]>,
+    pub fini: Option<unsafe extern "C" fn()>,
+    pub fini_array: Option<&'static [unsafe extern "C" fn()]>,
+
     pub versym: Option<&'static [u16]>,
     pub verdef: Option<*const elf::Verdef>,
     pub verneed: Option<*const elf::Verneed>,
     pub verneed_num: usize,
     pub verdef_num: usize,
+
+    // TLS data
     pub tls_module_id: usize,
     pub tls_offset: usize,
     pub tls_size: usize,
@@ -38,8 +55,6 @@ pub struct DSO {
 }
 
 impl DSO {
-    /// Create a DSO representing the main executable loaded by the kernel.
-    /// `sp` is the stack pointer at entry, used to find AT_PHDR/AT_PHNUM if needed.
     pub unsafe fn new_executable(sp: *const usize) -> Self {
         let argc = *sp;
         let argv = sp.add(1);
@@ -51,14 +66,14 @@ impl DSO {
 
         let auxv = envp as *const elf::Auxv;
 
-        let mut phdr = 0 as *const elf::Phdr;
+        let mut phdr_ptr = 0 as *const elf::Phdr;
         let mut phnum = 0;
         let mut entry = 0;
 
         let mut aux = auxv;
         while (*aux).a_type != elf::AT_NULL {
             match (*aux).a_type {
-                elf::AT_PHDR => phdr = (*aux).a_un.a_ptr as *const elf::Phdr,
+                elf::AT_PHDR => phdr_ptr = (*aux).a_un.a_ptr as *const elf::Phdr,
                 elf::AT_PHNUM => phnum = (*aux).a_un.a_val,
                 elf::AT_ENTRY => entry = (*aux).a_un.a_val,
                 _ => (),
@@ -66,24 +81,53 @@ impl DSO {
             aux = aux.add(1);
         }
 
-        let phdrs = slice::from_raw_parts(phdr, phnum);
-        let (dynamic, base_addr) = Self::parse_phdrs(phdrs);
+        let phdrs = slice::from_raw_parts(phdr_ptr, phnum);
+        let (dynamic, base_addr) = Self::parse_phdrs_for_dynamic(phdrs);
+        
+        let mut dso = Self::empty();
+        dso.name = String::from("main");
+        dso.base_addr = base_addr;
+        dso.phdrs = phdrs;
+        dso.entry_point = entry;
+        dso.dynamic = dynamic;
+        dso.tls_module_id = 1;
+        
+        dso.parse_dynamic();
+        dso.parse_phdrs_for_tls();
 
+        dso
+    }
+    
+    pub fn new_library(path: &str) -> Result<Self, ()> {
+        // TODO: Proper file opening and mapping
+        Err(())
+    }
+
+    fn empty() -> Self {
         Self {
-            name: String::from("main"),
-            base_addr,
-            entry_point: entry,
-            dynamic,
+            name: String::new(),
+            base_addr: 0,
+            phdrs: &[],
+            entry_point: 0,
+            dynamic: None,
             sym_table: None,
             str_table: None,
             gnu_hash: None,
             sysv_hash: None,
+            rela_dyn: None,
+            rela_plt: None,
+            rela_count: 0,
+            plt_got: None,
+            init: None,
+            init_array: None,
+            fini: None,
+            fini_array: None,
             versym: None,
             verdef: None,
             verneed: None,
             verneed_num: 0,
             verdef_num: 0,
-            tls_module_id: 1, // Main exe is module 1
+            tls_module_id: 0,
             tls_offset: 0,
             tls_size: 0,
             tls_align: 0,
@@ -91,11 +135,10 @@ impl DSO {
         }
     }
 
-    unsafe fn parse_phdrs(phdrs: &[elf::Phdr]) -> (Option<&'static [elf::Dyn]>, usize) {
+    unsafe fn parse_phdrs_for_dynamic(phdrs: &[elf::Phdr]) -> (Option<&'static [elf::Dyn]>, usize) {
         let mut dynamic = None;
         let mut base_addr = 0;
 
-        // Find PT_LOAD to determine base address
         for phdr in phdrs {
             if phdr.p_type == elf::PT_LOAD && phdr.p_offset == 0 {
                 base_addr = phdr.p_vaddr;
@@ -103,7 +146,6 @@ impl DSO {
             }
         }
 
-        // Find PT_DYNAMIC
         for phdr in phdrs {
             if phdr.p_type == elf::PT_DYNAMIC {
                 let mut dyn_ptr = (base_addr + phdr.p_vaddr) as *const elf::Dyn;
@@ -121,18 +163,73 @@ impl DSO {
         }
         (dynamic, base_addr)
     }
+    
+    unsafe fn parse_phdrs_for_tls(&mut self) {
+        for phdr in self.phdrs {
+            if phdr.p_type == elf::PT_TLS {
+                self.tls_image = Some(slice::from_raw_parts((self.base_addr + phdr.p_vaddr) as *const u8, phdr.p_filesz));
+                self.tls_size = phdr.p_memsz;
+                self.tls_align = phdr.p_align;
+                break;
+            }
+        }
+    }
+    
+    unsafe fn parse_dynamic(&mut self) {
+        let dynamic = match self.dynamic {
+            Some(d) => d,
+            None => return,
+        };
+        
+        let get_val = |tag| dynamic.iter().find(|d| d.d_tag == tag).map(|d| self.base_addr + d.d_un.d_ptr);
 
-    /// Run the initialization functions (DT_INIT / DT_INIT_ARRAY).
-    pub unsafe fn run_init(&self) {
-        // 1. DT_INIT
-        // 2. DT_INIT_ARRAY
+        self.sym_table = get_val(elf::DT_SYMTAB).map(|p| slice::from_raw_parts(p as *const elf::Sym, 0)); // Size is unknown here
+        self.str_table = get_val(elf::DT_STRTAB).map(|p| slice::from_raw_parts(p as *const u8, 0)); // Size is unknown here
+        
+        if let Some(str_sz) = get_val(elf::DT_STRSZ) {
+            self.str_table = self.str_table.map(|s| slice::from_raw_parts(s.as_ptr(), str_sz));
+        }
+        if let Some(sym_ent) = get_val(elf::DT_SYMENT) {
+            // This is tricky. We need to find the end of the symbol table.
+            // A common way is to use the string table size, but that's not guaranteed.
+            // Let's assume for now that the .dynsym section is contiguous.
+            // A better approach would be to use section headers if available.
+        }
+
+        self.rela_dyn = get_val(elf::DT_RELA).map(|p| slice::from_raw_parts(p as *const elf::Rela, get_val(elf::DT_RELASZ).unwrap_or(0) / mem::size_of::<elf::Rela>()));
+        self.rela_plt = get_val(elf::DT_JMPREL).map(|p| slice::from_raw_parts(p as *const elf::Rela, get_val(elf::DT_PLTRELSZ).unwrap_or(0) / mem::size_of::<elf::Rela>()));
+        self.rela_count = get_val(elf::DT_RELACOUNT).unwrap_or(0);
+        
+        self.init = get_val(elf::DT_INIT).map(|p| mem::transmute(p));
+        self.init_array = get_val(elf::DT_INIT_ARRAY).map(|p| slice::from_raw_parts(p as *const unsafe extern "C" fn(), get_val(elf::DT_INIT_ARRAYSZ).unwrap_or(0) / mem::size_of::<usize>()));
+        self.fini = get_val(elf::DT_FINI).map(|p| mem::transmute(p));
+        self.fini_array = get_val(elf::DT_FINI_ARRAY).map(|p| slice::from_raw_parts(p as *const unsafe extern "C" fn(), get_val(elf::DT_FINI_ARRAYSZ).unwrap_or(0) / mem::size_of::<usize>()));
     }
 
-    /// Get Iterator over relocations.
-    /// Returns (type, symbol_index, offset, addend).
+    pub unsafe fn run_init(&self) {
+        if let Some(init_func) = self.init {
+            init_func();
+        }
+        if let Some(init_arr) = self.init_array {
+            for func in init_arr {
+                func();
+            }
+        }
+    }
+    
+    pub fn relro_segment(&self) -> Option<&'static elf::Phdr> {
+        self.phdrs.iter().find(|phdr| phdr.p_type == elf::PT_GNU_RELRO)
+    }
+
     pub fn relocations(&self) -> impl Iterator<Item = (u32, usize, usize, Option<usize>)> {
-        // Implementation would iterate .rela.dyn / .rel.dyn
-        core::iter::empty()
+        let rela_dyn_iter = self.rela_dyn.unwrap_or(&[]).iter();
+        let rela_plt_iter = self.rela_plt.unwrap_or(&[]).iter();
+
+        rela_dyn_iter.chain(rela_plt_iter).map(|rela| {
+            let r_type = (rela.r_info & 0xFFFFFFFF) as u32;
+            let sym_idx = (rela.r_info >> 32) as usize;
+            (r_type, sym_idx, rela.r_offset, Some(rela.r_addend))
+        })
     }
 
     pub fn get_sym_name(&self, index: usize) -> Option<&str> {
@@ -147,11 +244,9 @@ impl DSO {
     }
 
     pub fn get_version_req(&self, _sym_idx: usize) -> Option<VersionReq> {
-        // Logic to look up index in .gnu.version and correlate with .gnu.version_r
         None
     }
 
-    // Accessors required by Linux Parity module
     pub fn sym_table(&self) -> &[elf::Sym] {
         self.sym_table.unwrap_or(&[])
     }

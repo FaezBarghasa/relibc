@@ -2,9 +2,15 @@
 name = "c-rt"
 version = "0.1.0"
 edition = "2021"
+authors = ["4lDO2 <4lDO2@protonmail.com>"]
+license = "MIT"
+description = "C runtime for relibc"
 
 [lib]
-crate-type = ["staticlib"]
+path = "src/lib.rs"
 
 [dependencies]
-redox-rt = { path = "../redox-rt", default-features = false, features = ["c-rt-test"] }
+relibc = { path = "../", default-features = false }
+
+[features]
+default = []

@@ -44,6 +44,7 @@ SECTIONS
       *(.rela.lbss .rela.lbss.* .rela.gnu.linkonce.lb.*)
       *(.rela.lrodata .rela.lrodata.* .rela.gnu.linkonce.lr.*)
       *(.rela.ifunc)
+      *(.rela.got.plt)
     }
   .rela.plt       :
     {

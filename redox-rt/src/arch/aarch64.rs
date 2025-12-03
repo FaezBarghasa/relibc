@@ -6,12 +6,44 @@ use crate::{
     RtTcb, Tcb,
     proc::{FdGuard, FdGuardUpper, ForkArgs, fork_inner},
     protocol::{ProcCall, RtSigInfo},
-    signal::{PROC_CONTROL_STRUCT, PosixStackt, RtSigarea, SigStack, inner_c},
+    signal::{PROC_CONTROL_STRUCT, PosixStackt, RtSigarea, SigStack, get_sigaltstack, inner_c, Sigcontrol},
+    start::{Stack, start_main},
 };
 
 // Setup a stack starting from the very end of the address space, and then growing downwards.
 pub const STACK_TOP: usize = 1 << 47;
 pub const STACK_SIZE: usize = 1024 * 1024;
+
+#[no_mangle]
+unsafe extern "C" fn bootstrap(argc: usize, argv: *const *const i8) -> ! {
+    let envp = argv.add(argc + 1);
+    let auxv = crate::start::parse_auxv(envp);
+
+    let stack = Stack {
+        base: (argv as usize - STACK_SIZE) as *mut u8,
+        size: STACK_SIZE,
+    };
+
+    let tcb_ext = TcbExtension {
+        self_ptr: core::ptr::null_mut(),
+        stack_base: stack.base as *mut (),
+        stack_size: stack.size,
+        tls_dtv: core::ptr::null_mut(),
+        tls_dtv_len: 0,
+        tls_static_base: crate::start::TlsMaster::new(auxv).copy_to_new_tls_region()
+            .expect("failed to initialize TLS")
+            .expect("no TLS segment found in executable"),
+    };
+
+    let mut tcb = Tcb::new(stack);
+    tcb.arch = tcb_ext;
+    tcb.arch.self_ptr = &mut tcb.arch;
+
+    core::arch::asm!("msr tpidr_el0, {}", in(reg) &tcb); // Reverted to original
+
+    start_main(tcb, argc, argv, envp, auxv);
+}
+
 
 #[derive(Debug, Default)]
 #[repr(C)]
@@ -386,7 +418,11 @@ asmfunction!(__relibc_internal_sigentry: ["
 8:
     // x18 is reserved by ABI as 'platform register', so clobbering it should be safe.
     mov x18, sp
+    .globl __relibc_internal_sigentry_crit_first
+__relibc_internal_sigentry_crit_first:
     ldr x0, [x18]
+    .globl __relibc_internal_sigentry_crit_second
+__relibc_internal_sigentry_crit_second:
     mov sp, x0
 
     ldp x18, x0, [x18, #16]
@@ -397,6 +433,8 @@ asmfunction!(__relibc_internal_sigentry: ["
 
     ldr x1, [x0, #{tcb_sc_off} + {sc_flags}]
     and x1, x1, ~1
+    .globl __relibc_internal_sigentry_crit_third
+__relibc_internal_sigentry_crit_third:
     str x1, [x0, #{tcb_sc_off} + {sc_flags}]
 
     ldp x1, x2, [x0, #{tcb_sa_off} + {sa_tmp_x1_x2}]
@@ -434,7 +472,7 @@ asmfunction!(__relibc_internal_sigentry: ["
 
     STACK_ALIGN = const 16,
     REDZONE_SIZE = const 128,
-    RTINF_SIZE = const size_of::<RtSigInfo>(),
+    RTINF_SIZE = const core::mem::size_of::<RtSigInfo>(),
 ]);
 
 asmfunction!(__relibc_internal_rlct_clone_ret: ["
@@ -461,7 +499,7 @@ pub unsafe fn manually_enter_trampoline() {
     let ctl = &Tcb::current().unwrap().os_specific.control;
 
     ctl.saved_archdep_reg.set(0);
-    let ip_location = &ctl.saved_ip as *const _ as usize;
+    let ip_location = &ctl.as_ptr().cast::<u8>().add(offset_of!(RtSigarea, control) + offset_of!(Sigcontrol, saved_ip));
 
     core::arch::asm!("
         bl 2f
@@ -472,13 +510,42 @@ pub unsafe fn manually_enter_trampoline() {
     3:
     ", inout("x0") ip_location => _, out("lr") _);
 }
+unsafe extern "C" {
+    fn __relibc_internal_sigentry_crit_first();
+    fn __relibc_internal_sigentry_crit_second();
+    fn __relibc_internal_sigentry_crit_third();
+}
 
-pub unsafe fn arch_pre(stack: &mut SigStack, os: &mut SigArea) -> PosixStackt {
-    PosixStackt {
-        sp: core::ptr::null_mut(), // TODO
-        size: 0,                   // TODO
-        flags: 0,                  // TODO
+pub unsafe fn arch_pre(stack: &mut SigStack, area: &mut SigArea) -> PosixStackt {
+    if stack.regs.pc == __relibc_internal_sigentry_crit_first as usize {
+        let sp = stack.regs.x18;
+        stack.regs.x0 = (sp as *const usize).read();
+        stack.regs.sp = stack.regs.x0;
+        let pair = (sp as *const [usize; 2]).add(1).read();
+        stack.regs.x18 = pair[0];
+        stack.regs.pc = pair[1];
+    } else if stack.regs.pc == __relibc_internal_sigentry_crit_second as usize {
+        stack.regs.sp = stack.regs.x0;
+        let pair = (stack.regs.x18 as *const [usize; 2]).add(1).read();
+        stack.regs.x18 = pair[0];
+        stack.regs.pc = pair[1];
+    } else if stack.regs.pc == __relibc_internal_sigentry_crit_third as usize {
+        let tcb = Tcb::current().unwrap();
+        let ctl = &tcb.os_specific.control;
+        let flags = ctl.control_flags.load(core::sync::atomic::Ordering::Relaxed);
+        ctl.control_flags.store(flags & !1, core::sync::atomic::Ordering::Relaxed);
+
+        stack.regs.x1 = area.tmp_x1_x2[0];
+        stack.regs.x2 = area.tmp_x1_x2[1];
+        stack.regs.x3 = area.tmp_x3_x4[0];
+        stack.regs.x4 = area.tmp_x3_x4[1];
+        stack.regs.x5 = area.tmp_x5_x6[0];
+        stack.regs.x6 = area.tmp_x5_x6[1];
+        stack.regs.pc = ctl.saved_ip.get();
+        stack.regs.x0 = ctl.saved_archdep_reg.get();
     }
+
+    get_sigaltstack(area, stack.regs.sp).into()
 }
 pub(crate) static PROC_FD: SyncUnsafeCell<usize> = SyncUnsafeCell::new(usize::MAX);
 static PROC_CALL: [usize; 1] = [ProcCall::Sigdeq as usize];

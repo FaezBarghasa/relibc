@@ -9,7 +9,6 @@ use core::sync::atomic::{AtomicU32 as AtomicUint, Ordering};
 
 pub struct Cond {
     cur: AtomicUint,
-    prev: AtomicUint,
 }
 
 type Result<T, E = Errno> = core::result::Result<T, E>;
@@ -18,23 +17,17 @@ impl Cond {
     pub fn new() -> Self {
         Self {
             cur: AtomicUint::new(0),
-            prev: AtomicUint::new(0),
         }
     }
-    fn wake(&self, count: i32) -> Result<(), Errno> {
-        // This is formally correct as long as we don't have more than u32::MAX threads.
-        let prev = self.prev.load(Ordering::Relaxed);
-        self.cur.store(prev.wrapping_add(1), Ordering::Relaxed);
-
-        crate::sync::futex_wake(&self.cur, count);
+    pub fn broadcast(&self) -> Result<(), Errno> {
+        self.cur.fetch_add(1, Ordering::Relaxed);
+        crate::sync::futex_wake(&self.cur, i32::MAX);
         Ok(())
     }
-    pub fn broadcast(&self) -> Result<(), Errno> {
-        self.wake(i32::MAX)
-    }
     pub fn signal(&self) -> Result<(), Errno> {
-        self.broadcast()
-        //self.wake(1)
+        self.cur.fetch_add(1, Ordering::Relaxed);
+        crate::sync::futex_wake(&self.cur, 1);
+        Ok(())
     }
     pub fn timedwait(&self, mutex: &RlctMutex, timeout: &timespec) -> Result<(), Errno> {
         self.wait_inner(mutex, Some(timeout))
@@ -79,20 +72,22 @@ impl Cond {
         // TODO: Error checking for certain types (i.e. robust and errorcheck) of mutexes, e.g. if the
         // mutex is not locked.
         let current = self.cur.load(Ordering::Relaxed);
-        self.prev.store(current, Ordering::Relaxed);
 
-        unlock();
+        unlock()?;
 
-        match deadline {
-            Some(deadline) => {
-                crate::sync::futex_wait(&self.cur, current, Some(&deadline));
-                lock_with_timeout(deadline);
-            }
-            None => {
-                crate::sync::futex_wait(&self.cur, current, None);
-                lock();
-            }
+        let res = crate::sync::futex_wait(&self.cur, current, deadline);
+
+        // Always re-acquire the lock, even if the wait timed out.
+        if let Some(deadline) = deadline {
+            lock_with_timeout(deadline)?;
+        } else {
+            lock()?;
         }
+
+        if res == super::FutexWaitResult::TimedOut {
+            return Err(Errno(ETIMEDOUT));
+        }
+
         Ok(())
     }
     pub fn wait(&self, mutex: &RlctMutex) -> Result<(), Errno> {

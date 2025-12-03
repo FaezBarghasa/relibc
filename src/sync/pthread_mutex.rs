@@ -30,7 +30,7 @@ const INDEX_MASK: u32 = !WAITING_BIT;
 const RECURSIVE_COUNT_MAX_INCLUSIVE: u32 = u32::MAX;
 // TODO: How many spins should we do before it becomes more time-economical to enter kernel mode
 // via futexes?
-const SPIN_COUNT: usize = 0;
+const SPIN_COUNT: usize = 100;
 
 impl RlctMutex {
     pub(crate) fn new(attr: &RlctMutexAttr) -> Result<Self, Errno> {
@@ -70,67 +70,79 @@ impl RlctMutex {
         Ok(0)
     }
     pub fn make_consistent(&self) -> Result<(), Errno> {
-        println!("TODO: Implement robust mutexes");
+        let this_thread = os_tid_invalid_after_fork();
+        let current_state = self.inner.load(Ordering::Relaxed);
+
+        if current_state & INDEX_MASK != this_thread {
+            return Err(Errno(EINVAL));
+        }
+
+        self.inner.fetch_and(!WAITING_BIT, Ordering::Relaxed);
         Ok(())
     }
     fn lock_inner(&self, deadline: Option<&timespec>) -> Result<(), Errno> {
         let this_thread = os_tid_invalid_after_fork();
 
-        let mut spins_left = SPIN_COUNT;
+        for _ in 0..SPIN_COUNT {
+            if self
+                .inner
+                .compare_exchange_weak(
+                    STATE_UNLOCKED,
+                    this_thread,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
+                if self.ty == Ty::Recursive {
+                    self.increment_recursive_count()?;
+                }
+                return Ok(());
+            }
+            core::hint::spin_loop();
+        }
 
         loop {
-            let result = self.inner.compare_exchange_weak(
-                STATE_UNLOCKED,
-                this_thread,
-                Ordering::Acquire,
-                Ordering::Relaxed,
-            );
-
-            match result {
-                // CAS succeeded
-                Ok(_) => {
-                    if self.ty == Ty::Recursive {
-                        self.increment_recursive_count()?;
+            let mut current_state = self.inner.load(Ordering::Relaxed);
+            if current_state & INDEX_MASK == 0 {
+                match self.inner.compare_exchange_weak(
+                    current_state,
+                    (current_state & WAITING_BIT) | this_thread,
+                    Ordering::Acquire,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => {
+                        if self.ty == Ty::Recursive {
+                            self.increment_recursive_count()?;
+                        }
+                        return Ok(());
                     }
-                    return Ok(());
+                    Err(s) => current_state = s,
                 }
-                // CAS failed, but the mutex was recursive and we already own the lock.
-                Err(thread) if thread & INDEX_MASK == this_thread && self.ty == Ty::Recursive => {
-                    self.increment_recursive_count()?;
-                    return Ok(());
-                }
-                // CAS failed, but the mutex was error-checking and we already own the lock.
-                Err(thread) if thread & INDEX_MASK == this_thread && self.ty == Ty::Errck => {
-                    return Err(Errno(EAGAIN));
-                }
-                // CAS spuriously failed, simply retry the CAS. TODO: Use core::hint::spin_loop()?
-                Err(thread) if thread & INDEX_MASK == 0 => {
-                    continue;
-                }
-                // CAS failed because some other thread owned the lock. We must now wait.
-                Err(thread) => {
-                    /*if spins_left > 0 {
-                        // TODO: Faster to spin trying to load the flag, compared to CAS?
-                        spins_left -= 1;
-                        core::hint::spin_loop();
-                        continue;
+            } else {
+                let new_state = current_state | WAITING_BIT;
+                if new_state != current_state {
+                    match self.inner.compare_exchange_weak(
+                        current_state,
+                        new_state,
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                    ) {
+                        Ok(_) => current_state = new_state,
+                        Err(s) => {
+                            current_state = s;
+                            continue;
+                        }
                     }
+                }
 
-                    spins_left = SPIN_COUNT;
+                let res = crate::sync::futex_wait(&self.inner, current_state, deadline);
 
-                    let inner = self.inner.fetch_or(WAITING_BIT, Ordering::Relaxed);
-
-                    if inner == STATE_UNLOCKED {
-                        continue;
-                    }*/
-
-                    // If the mutex is not robust, simply futex_wait until unblocked.
-                    //crate::sync::futex_wait(&self.inner, inner | WAITING_BIT, None);
-                    if crate::sync::futex_wait(&self.inner, thread, deadline)
-                        == FutexWaitResult::TimedOut
-                    {
-                        return Err(Errno(ETIMEDOUT));
-                    }
+                if self.robust && res == FutexWaitResult::Stale {
+                    return Err(Errno(EOWNERDEAD));
+                }
+                if res == FutexWaitResult::TimedOut {
+                    return Err(Errno(ETIMEDOUT));
                 }
             }
         }
@@ -209,13 +221,9 @@ impl RlctMutex {
             }
         }
 
-        self.inner.store(STATE_UNLOCKED, Ordering::Release);
-        crate::sync::futex_wake(&self.inner, i32::MAX);
-        /*let was_waiting = self.inner.swap(STATE_UNLOCKED, Ordering::Release) & WAITING_BIT != 0;
-
-        if was_waiting {
+        if self.inner.fetch_sub(self.inner.load(Ordering::Relaxed) & INDEX_MASK, Ordering::Release) & WAITING_BIT != 0 {
             let _ = crate::sync::futex_wake(&self.inner, 1);
-        }*/
+        }
 
         Ok(())
     }
