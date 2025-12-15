@@ -469,18 +469,26 @@ impl<W: Write> BufWriter<W> {
 
 impl<W: Write> Write for BufWriter<W> {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        if self.buf.len() + buf.len() > self.buf.capacity() {
-            self.flush_buf()?;
-        }
         if buf.len() >= self.buf.capacity() {
-            self.panicked = true;
-            let r = self.inner.as_mut().unwrap().write(buf);
-            self.panicked = false;
-            r
+            self.flush_buf()?;
+            // If the buffer is larger than our capacity, we can map it directly
+            // and flush it to disk, which is faster than a regular write.
+            let ptr = buf.as_ptr() as *mut c_void;
+            let len = buf.len();
+            io::flush_mmap(ptr, len)?;
+            Ok(len)
         } else {
-            Write::write(&mut self.buf, buf)
+            // If the incoming buffer won't fit in the remaining space of our
+            // buffer, flush our buffer first.
+            if self.buf.len() + buf.len() > self.buf.capacity() {
+                self.flush_buf()?;
+            }
+    
+            // Now we know the incoming buffer will fit, so copy it into our buffer.
+            self.buf.write(buf)
         }
     }
+
     fn flush(&mut self) -> io::Result<()> {
         self.flush_buf().and_then(|()| self.get_mut().flush())
     }
@@ -1080,7 +1088,7 @@ mod tests {
     //     b.iter(|| {
     //         BufWriter::new(io::sink())
     //     });
-    // }
+    }
 
     struct AcceptOneThenFail {
         written: bool,

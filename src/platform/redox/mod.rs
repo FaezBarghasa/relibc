@@ -742,18 +742,11 @@ impl Pal for Sys {
     }
 
     unsafe fn msync(addr: *mut c_void, len: usize, flags: c_int) -> Result<()> {
-        eprintln!(
-            "relibc msync({:p}, 0x{:x}, 0x{:x}): not implemented",
-            addr, len, flags
-        );
-        Err(Errno(ENOSYS))
-        /* TODO
-        syscall::msync(
-            addr as usize,
-            round_up_to_page_size(len),
-            flags
-        )?;
-        */
+        let Some(len) = round_up_to_page_size(len) else {
+            return Err(Errno(ENOMEM));
+        };
+        syscall::msync(addr as usize, len, flags as usize)?;
+        Ok(())
     }
 
     unsafe fn munlock(addr: *const c_void, len: usize) -> Result<()> {
@@ -876,7 +869,7 @@ impl Pal for Sys {
 
     fn read(fd: c_int, buf: &mut [u8]) -> Result<usize> {
         let fd = usize::try_from(fd).map_err(|_| Errno(EBADF))?;
-        Ok(redox_rt::sys::posix_read(fd, buf)?)
+        Ok(syscall::read(fd, buf)?)
     }
 
     fn pread(fd: c_int, buf: &mut [u8], offset: off_t) -> Result<usize> {
@@ -1372,7 +1365,7 @@ impl Pal for Sys {
 
     fn write(fd: c_int, buf: &[u8]) -> Result<usize> {
         let fd = usize::try_from(fd).map_err(|_| Errno(EBADFD))?;
-        Ok(redox_rt::sys::posix_write(fd, buf)?)
+        Ok(syscall::write(fd, buf)?)
     }
     fn pwrite(fd: c_int, buf: &[u8], offset: off_t) -> Result<usize> {
         unsafe {

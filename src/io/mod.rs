@@ -272,10 +272,11 @@ pub mod cursor;
 pub mod error;
 mod impls;
 pub mod prelude;
+pub mod zerocopy;
 
 use crate::out::Out;
 
-pub use self::{buffered::*, cursor::*, error::*};
+pub use self::{buffered::*, cursor::*, error::*, zerocopy::*};
 
 use self::prelude::*;
 
@@ -287,6 +288,29 @@ const DEFAULT_BUF_SIZE: usize = 8 * 1024;
 #[inline]
 pub fn last_os_error() -> Error {
     Error::last_os_error()
+}
+
+/// Synchronizes a memory-mapped file with the underlying storage.
+///
+/// This function is a safe wrapper around the `msync` syscall, ensuring that
+/// modifications to a memory-mapped region are flushed to the file.
+///
+/// # Arguments
+///
+/// * `addr`: A pointer to the starting address of the memory-mapped region.
+/// * `len`: The length of the memory region to be flushed.
+///
+/// # Returns
+///
+/// An `io::Result<()>` indicating the success or failure of the operation.
+pub fn flush_mmap(addr: *mut c_void, len: usize) -> Result<()> {
+    let flags = libc::MS_SYNC;
+    let result = unsafe { libc::msync(addr, len, flags) };
+    if result == 0 {
+        Ok(())
+    } else {
+        Err(last_os_error())
+    }
 }
 
 struct Guard<'a> {
