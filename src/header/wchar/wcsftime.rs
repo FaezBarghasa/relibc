@@ -1,17 +1,34 @@
-use super::{WriteWchar, wcrtomb};
+use super::{wcrtomb, WriteWchar};
+
+struct LocalCountingWriter<'a, W: ?Sized> {
+    inner: &'a mut W,
+    written: usize,
+}
+
+impl<'a, W: WriteWchar + ?Sized> LocalCountingWriter<'a, W> {
+    fn new(inner: &'a mut W) -> Self {
+        Self { inner, written: 0 }
+    }
+}
+
+impl<'a, W: WriteWchar + ?Sized> WriteWchar for LocalCountingWriter<'a, W> {
+    fn write_wchar(&mut self, c: wchar_t) -> crate::io::Result<()> {
+        self.inner.write_wchar(c)?;
+        self.written += 1;
+        Ok(())
+    }
+}
+
 use crate::{
     c_str::CStr,
     header::{
-        langinfo::{
-            ABDAY_1, ABMON_1, AM_STR, DAY_1, MON_1, PM_STR,
-            nl_item, nl_langinfo,
-        },
+        langinfo::{nl_item, nl_langinfo, ABDAY_1, ABMON_1, AM_STR, DAY_1, MON_1, PM_STR},
         stdlib::MB_CUR_MAX,
         time::tm,
     },
     platform::{self, types::*},
 };
-use alloc::string::String;
+use alloc::{string::String, vec::Vec};
 
 unsafe fn langinfo_to_wcs(item: nl_item, w: &mut dyn WriteWchar) -> bool {
     let ptr = nl_langinfo(item);
@@ -27,11 +44,7 @@ unsafe fn langinfo_to_wcs(item: nl_item, w: &mut dyn WriteWchar) -> bool {
     true
 }
 
-pub unsafe fn wcsftime<W: WriteWchar>(
-    w: &mut W,
-    format: *const wchar_t,
-    t: *const tm,
-) -> size_t {
+pub unsafe fn wcsftime<W: WriteWchar>(w: &mut W, format: *const wchar_t, t: *const tm) -> size_t {
     pub unsafe fn inner_wcsftime<W: WriteWchar>(
         w: &mut W,
         mut format: *const wchar_t,
@@ -53,7 +66,7 @@ pub unsafe fn wcsftime<W: WriteWchar>(
                 tmp.push_str($fmt);
                 tmp.push('\0');
 
-                let mut wide_tmp = tmp.chars().map(|c| c as wchar_t).collect::<Vec<wchar_t>>();
+                let mut wide_tmp = tmp.chars().map(|c| c as wchar_t).collect::<::alloc::vec::Vec<wchar_t>>();
                 wide_tmp.push(0);
 
                 if !inner_wcsftime(w, wide_tmp.as_ptr(), t) {
@@ -79,7 +92,7 @@ pub unsafe fn wcsftime<W: WriteWchar>(
 
         while *format != 0 {
             if *format != '%' as wchar_t {
-                w!(char *format);
+                w!(char * format);
                 format = format.offset(1);
                 continue;
             }
@@ -140,7 +153,11 @@ pub unsafe fn wcsftime<W: WriteWchar>(
                     };
                     if !fmt.is_null() {
                         let c_str = CStr::from_ptr(fmt);
-                        let mut wide_tmp = c_str.to_bytes().iter().map(|&c| c as wchar_t).collect::<Vec<wchar_t>>();
+                        let mut wide_tmp = c_str
+                            .to_bytes()
+                            .iter()
+                            .map(|&c| c as wchar_t)
+                            .collect::<Vec<wchar_t>>();
                         wide_tmp.push(0);
                         if !inner_wcsftime(w, wide_tmp.as_ptr(), t) {
                             return false;
@@ -209,7 +226,9 @@ pub unsafe fn wcsftime<W: WriteWchar>(
                     if !ptr.is_null() {
                         let c_str = CStr::from_ptr(ptr);
                         for &byte in c_str.to_bytes() {
-                            if w.write_wchar((byte as char).to_ascii_lowercase() as wchar_t).is_err() {
+                            if w.write_wchar((byte as char).to_ascii_lowercase() as wchar_t)
+                                .is_err()
+                            {
                                 return false;
                             }
                         }
@@ -255,7 +274,11 @@ pub unsafe fn wcsftime<W: WriteWchar>(
                     };
                     if !fmt.is_null() {
                         let c_str = CStr::from_ptr(fmt);
-                        let mut wide_tmp = c_str.to_bytes().iter().map(|&c| c as wchar_t).collect::<Vec<wchar_t>>();
+                        let mut wide_tmp = c_str
+                            .to_bytes()
+                            .iter()
+                            .map(|&c| c as wchar_t)
+                            .collect::<Vec<wchar_t>>();
                         wide_tmp.push(0);
                         if !inner_wcsftime(w, wide_tmp.as_ptr(), t) {
                             return false;
@@ -274,7 +297,11 @@ pub unsafe fn wcsftime<W: WriteWchar>(
                     };
                     if !fmt.is_null() {
                         let c_str = CStr::from_ptr(fmt);
-                        let mut wide_tmp = c_str.to_bytes().iter().map(|&c| c as wchar_t).collect::<Vec<wchar_t>>();
+                        let mut wide_tmp = c_str
+                            .to_bytes()
+                            .iter()
+                            .map(|&c| c as wchar_t)
+                            .collect::<Vec<wchar_t>>();
                         wide_tmp.push(0);
                         if !inner_wcsftime(w, wide_tmp.as_ptr(), t) {
                             return false;
@@ -325,7 +352,7 @@ pub unsafe fn wcsftime<W: WriteWchar>(
         true
     }
 
-    let mut cw = platform::CountingWriter::new(w);
+    let mut cw = LocalCountingWriter::new(w);
     if !inner_wcsftime(&mut cw, format, t) {
         return 0;
     }
@@ -335,7 +362,11 @@ pub unsafe fn wcsftime<W: WriteWchar>(
 fn weeks_per_year(year: c_int) -> c_int {
     let year = year as f64;
     let p_y = (year + (year / 4.) - (year / 100.) + (year / 400.)) as c_int % 7;
-    if p_y == 4 { 53 } else { 52 }
+    if p_y == 4 {
+        53
+    } else {
+        52
+    }
 }
 
 fn week_of_year(time: &tm) -> c_int {

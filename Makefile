@@ -118,6 +118,7 @@ $(BUILD)/openlibm/libopenlibm.a: $(BUILD)/include $(BUILD)/openlibm headers
 		CPPFLAGS="-fno-stack-protector -ffreestanding -I$(abspath $(BUILD)/include) $(CC_NOSTDINC_FLAGS)" \
 		CFLAGS="-O3 -fPIC -fno-stack-protector -ffreestanding -I$(abspath $(BUILD)/include) $(CC_NOSTDINC_FLAGS)" \
 		-C $(BUILD)/openlibm libopenlibm.a
+	$(AR) d $@ fenv.c.o
 
 # 4. Combine Libraries
 $(BUILD)/libc.a: $(BUILD)/librelibc.a $(BUILD)/openlibm/libopenlibm.a

@@ -11,7 +11,7 @@ use crate::{
         ctype::isspace,
         errno::{EILSEQ, ENOMEM, ERANGE},
         stdio::*,
-        stdlib::{MB_CUR_MAX, MB_LEN_MAX, malloc},
+        stdlib::{malloc, MB_CUR_MAX, MB_LEN_MAX},
         string,
         time::*,
         wchar::{lookaheadreader::LookAheadReader, utf8::get_char_encoded_length},
@@ -19,14 +19,14 @@ use crate::{
     },
     io,
     iter::{NulTerminated, NulTerminatedInclusive},
-    platform::{self, ERRNO, types::*},
+    platform::{self, types::*, ERRNO},
 };
 
 mod lookaheadreader;
 mod utf8;
+mod wcsftime;
 mod wprintf;
 mod wscanf;
-mod wcsftime;
 
 pub type wchar_t = c_int;
 pub type wint_t = c_uint;
@@ -467,7 +467,8 @@ pub unsafe extern "C" fn vswprintf(
     arg: va_list,
 ) -> c_int {
     let mut writer = WcharWriter::new(s, n);
-    let result = crate::header::stdio::printf::inner_printf::<Wide, _>(&mut writer, WStr::from_ptr(format), arg);
+    let result =
+        crate::header::stdio::printf::inner_printf(&mut writer, WStr::from_ptr(format), arg);
     if writer.written < n {
         *s.add(writer.written) = 0;
     }
@@ -804,7 +805,7 @@ pub unsafe extern "C" fn wcstod(mut nptr: *const wchar_t, endptr: *mut *mut wcha
     let mut ptr = nptr;
 
     // Skip whitespace
-    while iswspace(*ptr) != 0 {
+    while iswspace(*ptr as wint_t) != 0 {
         ptr = ptr.add(1);
     }
 
@@ -827,7 +828,7 @@ pub unsafe extern "C" fn wcstod(mut nptr: *const wchar_t, endptr: *mut *mut wcha
         if !endptr.is_null() {
             *endptr = ptr as *mut _;
         }
-        return sign * crate::header::math::HUGE_VAL;
+        return sign * core::f64::INFINITY;
     }
     if wcsncasecmp(ptr, "nan\0".as_ptr() as *const wchar_t, 3) == 0 {
         ptr = ptr.add(3);
@@ -844,7 +845,7 @@ pub unsafe extern "C" fn wcstod(mut nptr: *const wchar_t, endptr: *mut *mut wcha
         if !endptr.is_null() {
             *endptr = ptr as *mut _;
         }
-        return crate::header::math::NAN;
+        return core::f64::NAN;
     }
 
     // Check for hexadecimal floating point
@@ -875,7 +876,7 @@ pub unsafe extern "C" fn wcstod(mut nptr: *const wchar_t, endptr: *mut *mut wcha
 
         if frac {
             frac_count += 1.0;
-            result += digit / base.powf(frac_count);
+            result += digit / libm::pow(base, frac_count);
         } else {
             result = result * base + digit;
         }
@@ -892,7 +893,11 @@ pub unsafe extern "C" fn wcstod(mut nptr: *const wchar_t, endptr: *mut *mut wcha
     }
 
     // Check for exponent
-    if *ptr == 'p' as wchar_t || *ptr == 'P' as wchar_t || *ptr == 'e' as wchar_t || *ptr == 'E' as wchar_t {
+    if *ptr == 'p' as wchar_t
+        || *ptr == 'P' as wchar_t
+        || *ptr == 'e' as wchar_t
+        || *ptr == 'E' as wchar_t
+    {
         let exp_char = *ptr;
         ptr = ptr.add(1);
         let mut exp_sign = 1.0;
@@ -915,13 +920,16 @@ pub unsafe extern "C" fn wcstod(mut nptr: *const wchar_t, endptr: *mut *mut wcha
             10.0
         };
 
-        result *= exp_base.powf(exp * exp_sign);
+        result *= libm::pow(exp_base, exp * exp_sign);
     }
 
     if !endptr.is_null() {
         *endptr = ptr as *mut _;
     }
 
+    if result.is_infinite() {
+        platform::ERRNO.set(ERANGE);
+    }
     result * sign
 }
 
@@ -1129,7 +1137,11 @@ pub unsafe extern "C" fn wcsxfrm(ws1: *mut wchar_t, ws2: *const wchar_t, n: size
 
 #[unsafe(no_mangle)]
 pub extern "C" fn wctob(c: wint_t) -> c_int {
-    if c <= 0x7F { c as c_int } else { EOF }
+    if c <= 0x7F {
+        c as c_int
+    } else {
+        EOF
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1145,24 +1157,21 @@ pub extern "C" fn wcwidth(wc: wchar_t) -> c_int {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wmemchr(ws: *const wchar_t, wc: wchar_t, n: size_t) -> *mut wchar_t {
-    for i in 0..n {
-        if *ws.add(i) == wc {
-            return ws.add(i) as *mut wchar_t;
-        }
+    let slice = slice::from_raw_parts(ws, n);
+    match slice.iter().position(|&x| x == wc) {
+        Some(pos) => ws.add(pos) as *mut wchar_t,
+        None => ptr::null_mut(),
     }
-    ptr::null_mut()
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wmemcmp(ws1: *const wchar_t, ws2: *const wchar_t, n: size_t) -> c_int {
-    for i in 0..n {
-        let wc1 = *ws1.add(i);
-        let wc2 = *ws2.add(i);
-        if wc1 != wc2 {
-            return wc1 - wc2;
-        }
+    let s1 = slice::from_raw_parts(ws1, n);
+    let s2 = slice::from_raw_parts(ws2, n);
+    match s1.iter().zip(s2.iter()).filter(|(a, b)| a != b).next() {
+        Some((&a, &b)) => a.wrapping_sub(b),
+        None => 0,
     }
-    0
 }
 
 #[unsafe(no_mangle)]
@@ -1193,9 +1202,8 @@ pub unsafe extern "C" fn wmemmove(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wmemset(ws: *mut wchar_t, wc: wchar_t, n: size_t) -> *mut wchar_t {
-    for i in 0..n {
-        *ws.add(i) = wc;
-    }
+    let slice = slice::from_raw_parts_mut(ws, n);
+    slice.fill(wc);
     ws
 }
 

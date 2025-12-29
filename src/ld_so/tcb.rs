@@ -48,7 +48,8 @@ type OsSpecific = redox_rt::signal::RtSigarea;
 #[repr(C)]
 // FIXME: Only return &Tcb, and use interior mutability, since it contains the Pthread struct
 pub struct Tcb {
-    pub generic: GenericTcb<OsSpecific>,
+    pub generic: GenericTcb<OsSpecific, ()>,
+    pub tls_len: usize,
     /// Pointer to a list of initial TLS data
     pub masters_ptr: *mut Master,
     /// Size of the masters list in bytes (multiple of mem::size_of::<Master>())
@@ -90,11 +91,14 @@ impl Tcb {
             Self {
                 generic: GenericTcb {
                     tls_end: tls.as_mut_ptr().add(tls.len()),
-                    tls_len: tls.len(),
                     tcb_ptr: tcb_ptr.cast(),
                     tcb_len: tcb_page.len(),
+                    dtv: ptr::null_mut(),
+                    dtv_len: 0,
                     os_specific: OsSpecific::default(),
+                    platform_specific: (),
                 },
+                tls_len: tls.len(),
                 masters_ptr: ptr::null_mut(),
                 masters_len: 0,
                 num_copied_masters: 0,
@@ -120,7 +124,7 @@ impl Tcb {
 
     /// Get the current TCB
     pub unsafe fn current() -> Option<&'static mut Self> {
-        unsafe { Some(&mut *GenericTcb::<OsSpecific>::current_ptr()?.cast()) }
+        unsafe { Some(&mut *GenericTcb::<OsSpecific, ()>::current_ptr()?.cast()) }
     }
 
     /// A slice for all of the TLS data
@@ -358,7 +362,7 @@ impl Tcb {
 }
 
 impl Deref for Tcb {
-    type Target = GenericTcb<OsSpecific>;
+    type Target = GenericTcb<OsSpecific, ()>;
 
     fn deref(&self) -> &Self::Target {
         &self.generic

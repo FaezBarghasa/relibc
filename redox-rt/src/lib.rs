@@ -1,11 +1,18 @@
 #![no_std]
 #![allow(internal_features)]
-#![feature(asm_const, core_intrinsics, int_roundings, slice_ptr_get, sync_unsafe_cell)]
+#![feature(
+    asm_const,
+    core_intrinsics,
+    int_roundings,
+    slice_ptr_get,
+    sync_unsafe_cell
+)]
 #![forbid(unreachable_patterns)]
 
 use core::{
     cell::UnsafeCell,
-    mem::{MaybeUninit, size_of},
+    mem::{size_of, MaybeUninit},
+    ptr,
 };
 
 use c_rt::ExpectTlsFree;
@@ -15,6 +22,7 @@ use syscall::Sigcontrol;
 use self::{
     proc::{FdGuard, FdGuardUpper, STATIC_PROC_INFO},
     protocol::ProcMeta,
+    start::Stack,
     sync::Mutex,
 };
 
@@ -52,6 +60,7 @@ mod auxv_constants;
 
 pub mod protocol;
 pub mod signal;
+pub mod start;
 pub mod sync;
 pub mod sys;
 pub mod thread;
@@ -64,7 +73,11 @@ pub struct RtTcb {
 }
 impl RtTcb {
     pub fn current() -> &'static Self {
-        unsafe { &Tcb::current().unwrap().os_specific }
+        unsafe {
+            &generic_rt::GenericTcb::<Self, arch::TcbExtension>::current()
+                .unwrap()
+                .os_specific
+        }
     }
     pub fn thread_fd(&self) -> &FdGuardUpper {
         unsafe { (&*self.thr_fd.get()).as_ref().unwrap() }
@@ -72,6 +85,25 @@ impl RtTcb {
 }
 
 pub type Tcb = GenericTcb<RtTcb, arch::TcbExtension>;
+
+pub fn new_tcb(stack: Stack) -> Tcb {
+    Tcb {
+        tcb_ptr: ptr::null_mut(),
+        tcb_len: 0,
+        tls_end: ptr::null_mut(),
+        dtv: ptr::null_mut(),
+        dtv_len: 0,
+        os_specific: Default::default(),
+        platform_specific: arch::TcbExtension {
+            self_ptr: ptr::null_mut(),
+            stack_base: stack.base,
+            stack_size: stack.len,
+            tls_dtv: ptr::null_mut(),
+            tls_dtv_len: 0,
+            tls_static_base: ptr::null_mut(),
+        },
+    }
+}
 
 /// OS and architecture specific code to activate TLS - Redox aarch64
 #[allow(unsafe_op_in_unsafe_fn)]

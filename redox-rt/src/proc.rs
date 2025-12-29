@@ -5,15 +5,20 @@ use core::{
 };
 
 use crate::{
-    c_rt, DYNAMIC_PROC_INFO, RtTcb, StaticProcInfo,
+    DYNAMIC_PROC_INFO, RtTcb, StaticProcInfo,
     arch::*,
     auxv_constants::*,
     auxv_defs::*,
-    ld_so,
+    c_rt,
     protocol::{ProcCall, ThreadCall},
     read_proc_meta,
     sys::{proc_call, thread_call},
 };
+
+use syscall::flag::*;
+use syscall::number::*;
+
+use crate::signal::PosixStackt;
 
 use alloc::{boxed::Box, collections::BTreeMap, vec};
 
@@ -23,7 +28,7 @@ use goblin::elf32::{
     header::Header,
     program_header::program_header32::{PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD, ProgramHeader},
 };
-#[cfg(target_pointer_pointer_width = "64")]
+#[cfg(target_pointer_width = "64")]
 use goblin::elf64::{
     header::Header,
     program_header::program_header64::{PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD, ProgramHeader},
@@ -36,6 +41,22 @@ use syscall::{
     flag::{MapFlags, SEEK_SET},
 };
 
+use crate::arch::deactivate_tcb;
+
+#[no_mangle]
+pub unsafe extern "C" fn __relibc_internal_fork_wrapper(_arg: usize) -> usize {
+    unimplemented!()
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn __relibc_internal_fork_ret(
+    _initial_stack: *mut PosixStackt,
+    _prev_sigmask: u64,
+    _ret_ptr: *mut usize,
+) {
+    unimplemented!()
+}
+
 pub fn exit(status: u8) -> ! {
     exit_impl(Some(status as u64));
 }
@@ -45,10 +66,6 @@ pub fn abort() -> ! {
 
 fn exit_impl(value: Option<u64>) -> ! {
     let proc_info = crate::static_proc_info();
-
-    unsafe {
-        ld_so::fini();
-    }
 
     if proc_info.has_proc_fd {
         let proc_fd = unsafe { proc_info.proc_fd.assume_init_ref() };
@@ -61,7 +78,7 @@ fn exit_impl(value: Option<u64>) -> ! {
     }
 
     loop {
-        let _ = syscall::exit(value.unwrap_or(0));
+        let _ = unsafe { syscall::syscall1(1, value.unwrap_or(0) as usize) };
     }
 }
 
@@ -764,7 +781,7 @@ impl<const UPPER: bool> FdGuard<UPPER> {
 
     #[inline]
     pub fn write(&self, buf: &[u8]) -> Result<usize> {
-        syscall_slice_impl!(write, self.fd, buf)
+        syscall::write(self.fd, buf)
     }
 
     #[inline]
@@ -1003,7 +1020,7 @@ pub fn new_child_process(args: &ForkArgs<'_>) -> Result<NewChildProc> {
                 proc_info.has_proc_fd,
                 "cannot use ForkArgs::Managed without an existing proc info"
             );
-            let this_proc_fd = unsafe { proc_info.proc.assume_init_ref() };
+            let this_proc_fd = unsafe { proc_info.proc_fd.assume_init_ref() };
             let child_proc_fd = this_proc_fd.dup(b"fork")?.to_upper()?;
             let only_thread_fd = child_proc_fd.dup(b"thread-0")?.to_upper()?;
             let meta = read_proc_meta(&child_proc_fd)?;
@@ -1045,11 +1062,8 @@ pub fn new_child_process(args: &ForkArgs<'_>) -> Result<NewChildProc> {
 
 pub unsafe fn make_init() -> (&'static FdGuardUpper, &'static FdGuardUpper) {
     let proc_fd = FdGuard::new(
-        syscall::open(
-            c_rt::c!("/scheme/proc/init"),
-            syscall::O_CLOEXEC,
-        )
-        .expect("failed to create init"),
+        syscall::open("/scheme/proc/init", syscall::O_CLOEXEC)
+            .expect("failed to create init"),
     )
     .to_upper()
     .unwrap();

@@ -33,6 +33,7 @@ unsafe extern "C" fn bootstrap(argc: usize, argv: *const *const i8) -> ! {
         tls_static_base: crate::start::TlsMaster::new(auxv).copy_to_new_tls_region()
             .expect("failed to initialize TLS")
             .expect("no TLS segment found in executable"),
+        my_thread_local: 42,
     };
 
     let mut tcb = Tcb::new(stack);
@@ -86,6 +87,22 @@ pub struct TcbExtension {
     pub tls_dtv: *mut (),
     pub tls_dtv_len: usize,
     pub tls_static_base: *mut (),
+    pub my_thread_local: u64,
+}
+
+pub fn get_thread_local() -> u64 {
+    let tcb: *const Tcb;
+    unsafe {
+        core::arch::asm!("mv {}, tp", out(reg) tcb);
+    }
+    unsafe { (*tcb).arch.my_thread_local }
+}
+pub fn set_thread_local(value: u64) {
+    let tcb: *mut Tcb;
+    unsafe {
+        core::arch::asm!("mv {}, tp", out(reg) tcb);
+    }
+    unsafe { (*tcb).arch.my_thread_local = value; }
 }
 
 /// Deactive TLS, used before exec() on Redox to not trick target executable into thinking TLS

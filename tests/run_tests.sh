@@ -124,6 +124,7 @@ EXPECT_NAMES=(\
 	wchar/fgetwc \
 	wchar/fwide \
 	wchar/mbrtowc \
+	wchar/mbrtowc_restart \
 	wchar/mbsrtowcs \
 	wchar/printf-on-wchars \
 	wchar/putwchar \
@@ -139,6 +140,7 @@ EXPECT_NAMES=(\
 	wchar/wcsrtombs \
 	wchar/wcsstr \
 	wchar/wcstod \
+	wchar/wcstod_overflow \
 	wchar/wcstok \
 	wchar/wcstol \
 	wchar/wcstoimax \
@@ -148,6 +150,7 @@ EXPECT_NAMES=(\
 	wchar/wcsnlen \
 	wchar/wcsnrtombs \
 	wchar/wcswidth \
+	wchar/wmem \
 	wctype/towlower \
 	wctype/towupper \
 	mkfifo \

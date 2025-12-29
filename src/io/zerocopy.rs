@@ -1,5 +1,5 @@
-
-use crate::io::{self, Read, Write, Seek, SeekFrom, Error, ErrorKind, DEFAULT_BUF_SIZE};
+use crate::io::{self, Error, ErrorKind, Read, Seek, SeekFrom, Write, DEFAULT_BUF_SIZE};
+use alloc::{boxed::Box, vec::Vec};
 use core::cmp;
 
 pub struct ZeroCopyBufReader<R> {
@@ -69,7 +69,10 @@ impl<W: Write> ZeroCopyBufWriter<W> {
             let written = self.inner.as_mut().unwrap().write(&self.buf)?;
             if written < self.buf.len() {
                 // This is a simplistic handling. A real implementation would need to handle partial writes.
-                return Err(Error::new(ErrorKind::WriteZero, "failed to write entire buffer"));
+                return Err(Error::new(
+                    ErrorKind::WriteZero,
+                    "failed to write entire buffer",
+                ));
             }
             self.buf.clear();
         }

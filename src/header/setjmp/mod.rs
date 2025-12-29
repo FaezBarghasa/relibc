@@ -20,10 +20,15 @@ platform_specific! {
     "riscv64", "riscv64", "s";
 }
 
-//Each platform has different sizes for sigjmp_buf, currently only x86_64 is supported
-extern "C" {
-    pub static _JBLEN: usize;
-}
+//Each platform has different sizes for sigjmp_buf
+#[cfg(target_arch = "x86")]
+pub const _JBLEN: usize = 6;
+#[cfg(target_arch = "x86_64")]
+pub const _JBLEN: usize = 8;
+#[cfg(target_arch = "aarch64")]
+pub const _JBLEN: usize = 34; // Value from ASM
+#[cfg(target_arch = "riscv64")]
+pub const _JBLEN: usize = 26; // Value from ASM
 unsafe extern "C" {
     pub fn setjmp(jb: *mut u64) -> i32;
     pub fn longjmp(jb: *mut u64, ret: i32);

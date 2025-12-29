@@ -280,6 +280,7 @@ pub use self::{buffered::*, cursor::*, error::*, zerocopy::*};
 
 use self::prelude::*;
 
+use crate::platform::types::c_void;
 use alloc::string::String;
 use core::{cmp, fmt, ptr, str};
 
@@ -304,8 +305,8 @@ pub fn last_os_error() -> Error {
 ///
 /// An `io::Result<()>` indicating the success or failure of the operation.
 pub fn flush_mmap(addr: *mut c_void, len: usize) -> Result<()> {
-    let flags = libc::MS_SYNC;
-    let result = unsafe { libc::msync(addr, len, flags) };
+    let result =
+        unsafe { crate::header::sys_mman::msync(addr, len, crate::header::sys_mman::MS_SYNC) };
     if result == 0 {
         Ok(())
     } else {

@@ -1,21 +1,21 @@
 use core::{ffi::c_int, ptr::NonNull, sync::atomic::Ordering};
 
 use syscall::{
-    CallFlags, EAGAIN, EINTR, EINVAL, ENOMEM, EPERM, Error, RawAction, Result, SenderInfo,
-    SetSighandlerData, SigProcControl, Sigcontrol, SigcontrolFlags, TimeSpec, data::AtomicU64,
+    data::AtomicU64, CallFlags, Error, RawAction, Result, SenderInfo, SetSighandlerData,
+    SigProcControl, Sigcontrol, SigcontrolFlags, TimeSpec, EAGAIN, EINTR, EINVAL, ENOMEM, EPERM,
 };
 
 use crate::{
-    RtTcb, Tcb,
     arch::*,
     current_proc_fd,
     protocol::{
-        ProcCall, RtSigInfo, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN, SIGTTOU, SIGURG,
-        SIGWINCH, ThreadCall,
+        ProcCall, RtSigInfo, ThreadCall, SIGCHLD, SIGCONT, SIGKILL, SIGSTOP, SIGTSTP, SIGTTIN,
+        SIGTTOU, SIGURG, SIGWINCH,
     },
     static_proc_info,
     sync::Mutex,
     sys::{proc_call, this_thread_call},
+    RtTcb, Tcb,
 };
 
 #[cfg(target_arch = "x86_64")]
@@ -135,7 +135,7 @@ unsafe fn inner(stack: &mut SigStack) {
             (area.tmp_rt_inf.pid, area.tmp_rt_inf.uid)
         } else {
             stack.sig_code = 0; // TODO: SI_USER constant?
-            // TODO: Handle SIGCHLD. Maybe that should always be queued though?
+                                // TODO: Handle SIGCHLD. Maybe that should always be queued though?
             let inf = SenderInfo::from_raw(area.tmp_id_inf);
             (inf.pid, inf.ruid)
         }
@@ -211,9 +211,13 @@ unsafe fn inner(stack: &mut SigStack) {
     stack.old_mask = prev_sigallow;
 
     // Call handler, either sa_handler or sa_siginfo depending on flag.
-    if sigaction.flags.contains(SigactionFlags::SIGINFO)
-        && let Some(sigaction) = unsafe { handler.sigaction }
-    {
+    let maybe_action = if sigaction.flags.contains(SigactionFlags::SIGINFO) {
+        unsafe { handler.sigaction }
+    } else {
+        None
+    };
+
+    if let Some(sigaction) = maybe_action {
         let info = SiginfoAbi {
             si_signo: stack.sig_num as c_int,
             si_addr: core::ptr::null_mut(),
@@ -606,6 +610,16 @@ const fn sig_bit(sig: u32) -> u64 {
     1 << (sig - 1)
 }
 
+#[cfg(target_arch = "x86_64")]
+static SUPPORTS_AVX: AtomicU8 = AtomicU8::new(0);
+
+use core::sync::atomic::{AtomicU32, AtomicU8};
+
+#[no_mangle]
+pub unsafe extern "C" fn __relibc_internal_sigentry() {
+    unimplemented!()
+}
+
 pub fn setup_sighandler(tcb: &RtTcb, first_thread: bool) {
     if first_thread {
         let _guard = SIGACTIONS_LOCK.lock();
@@ -819,10 +833,10 @@ pub fn await_signal_sync(inner_allowset: u64, timeout: Option<&TimeSpec>) -> Res
     let thread_pending = set_allowset_raw(&control.word, inner_allowset, old_allowset);
     let proc_pending = PROC_CONTROL_STRUCT.pending.load(Ordering::Acquire);
 
-    if let Err(error) = res
-        && error.errno != EINTR
-    {
-        return Err(error);
+    if let Err(error) = res {
+        if error.errno != EINTR {
+            return Err(error);
+        }
     }
 
     // Then check if there were any signals left after waiting.
@@ -838,16 +852,16 @@ fn try_claim_multiple(
 ) -> Option<SiginfoAbi> {
     while (proc_pending | thread_pending) & allowset != 0 {
         let sig_idx = ((proc_pending | thread_pending) & allowset).trailing_zeros();
-        if thread_pending & allowset & (1 << sig_idx) != 0
-            && let Some(res) = try_claim_single(sig_idx, Some(control))
-        {
-            return Some(res);
+        if thread_pending & allowset & (1 << sig_idx) != 0 {
+            if let Some(res) = try_claim_single(sig_idx, Some(control)) {
+                return Some(res);
+            }
         }
         thread_pending &= !(1 << sig_idx);
-        if proc_pending & allowset & (1 << sig_idx) != 0
-            && let Some(res) = try_claim_single(sig_idx, None)
-        {
-            return Some(res);
+        if proc_pending & allowset & (1 << sig_idx) != 0 {
+            if let Some(res) = try_claim_single(sig_idx, None) {
+                return Some(res);
+            }
         }
         proc_pending &= !(1 << sig_idx);
     }

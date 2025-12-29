@@ -25,7 +25,7 @@ pub union pthread_rwlock_t {
 }
 #[repr(C)]
 pub union pthread_barrier_t {
-    __relibc_internal_size: [c_uchar; 24],
+    __relibc_internal_size: [c_uchar; 12],
     __relibc_internal_align: c_int,
 }
 #[repr(C)]
@@ -45,7 +45,7 @@ pub union pthread_mutexattr_t {
 }
 #[repr(C)]
 pub union pthread_cond_t {
-    __relibc_internal_size: [c_uchar; 8],
+    __relibc_internal_size: [c_uchar; 4],
     __relibc_internal_align: c_int,
 }
 #[repr(C)]

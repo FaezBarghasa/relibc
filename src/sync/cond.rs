@@ -2,7 +2,7 @@
 
 use crate::{
     error::Errno,
-    header::{pthread::*, time::timespec},
+    header::{errno::*, pthread::*, time::timespec},
 };
 
 use core::sync::atomic::{AtomicU32 as AtomicUint, Ordering};

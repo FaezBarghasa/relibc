@@ -42,36 +42,67 @@ fn utf8_char_width(b: u8) -> usize {
 
 //It's guaranteed that we don't have any nullpointers here
 pub unsafe fn mbrtowc(pwc: *mut wchar_t, s: *const c_char, n: usize, ps: *mut mbstate_t) -> usize {
-    let size = utf8_char_width(*s as u8);
-    if size > n {
+    // ps is guaranteed non-null by caller (mod.rs)
+    let ps = &mut *ps;
+
+    let mut count = ps.__count as usize;
+    let mut buffer: [u8; 4] = (ps.__value as u32).to_le_bytes();
+    let mut bytes_read_from_s = 0;
+
+    if count == 0 {
+        if n == 0 {
+            return -2isize as usize;
+        }
+        // Start new sequence
+        let b = *s as u8;
+        buffer[0] = b;
+        count = 1;
+        bytes_read_from_s = 1;
+    }
+
+    // Determine expected width
+    let width = utf8_char_width(buffer[0]);
+    if width == 0 {
         platform::ERRNO.set(errno::EILSEQ);
+        ps.__count = 0;
+        return -1isize as usize;
+    }
+
+    // Read remaining bytes
+    while count < width && bytes_read_from_s < n {
+        buffer[count] = *s.add(bytes_read_from_s) as u8;
+        count += 1;
+        bytes_read_from_s += 1;
+    }
+
+    if count < width {
+        // Incomplete
+        ps.__count = count as c_int;
+        ps.__value = u32::from_le_bytes(buffer) as c_int;
         return -2isize as usize;
     }
-    if size == 0 {
-        platform::ERRNO.set(errno::EILSEQ);
-        return -1isize as usize;
+
+    // Full sequence available
+    match str::from_utf8(&buffer[..width]) {
+        Ok(s_slice) => {
+            let c = s_slice.chars().next().unwrap();
+            if !pwc.is_null() {
+                *pwc = c as wchar_t;
+            }
+            ps.__count = 0;
+            ps.__value = 0;
+            if c == '\0' { 0 } else { bytes_read_from_s }
+        }
+        Err(_) => {
+            platform::ERRNO.set(errno::EILSEQ);
+            ps.__count = 0; // Reset on error
+            -1isize as usize
+        }
     }
-
-    let slice = slice::from_raw_parts(s as *const u8, size);
-    let decoded = str::from_utf8(slice);
-    if decoded.is_err() {
-        platform::ERRNO.set(errno::EILSEQ);
-        return -1isize as usize;
-    }
-
-    let wc = decoded.unwrap();
-
-    let result: wchar_t = wc.chars().next().unwrap() as wchar_t;
-
-    if !pwc.is_null() {
-        *pwc = result;
-    }
-
-    if result != 0 { size } else { 0 }
 }
 
 //It's guaranteed that we don't have any nullpointers here
-pub unsafe fn wcrtomb(s: *mut c_char, wc: wchar_t, ps: *mut mbstate_t) -> usize {
+pub unsafe fn wcrtomb(s: *mut c_char, wc: wchar_t, _ps: *mut mbstate_t) -> usize {
     let dc = char::from_u32(wc as u32);
 
     if dc.is_none() {

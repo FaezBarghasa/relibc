@@ -78,6 +78,10 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fd0f2584146f6f2ef48085050886acf353beff7305ebd1ae69500e27c67f64b"
 
 [[package]]
+name = "c-rt"
+version = "0.1.0"
+
+[[package]]
 name = "cbitset"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -228,6 +232,7 @@ version = "0.1.0"
 dependencies = [
  "macros",
  "platform",
+ "redox-rt",
  "spin",
 ]
 
@@ -429,6 +434,7 @@ name = "redox-rt"
 version = "0.1.0"
 dependencies = [
  "bitflags",
+ "c-rt",
  "generic-rt",
  "goblin",
  "plain",
@@ -448,7 +454,8 @@ dependencies = [
 [[package]]
 name = "redox_syscall"
 version = "0.5.18"
-source = "git+https://gitlab.redox-os.org/redox-os/syscall.git?branch=master#15aa8e32ef0f3328dd9d48cc8ca02e148a362069"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ed2bf2547551a7053d6fdfafda3f938979645c44812fbfcda098faae3f1a362d"
 dependencies = [
  "bitflags",
 ]
@@ -721,3 +728,8 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[patch.unused]]
+name = "redox_syscall"
+version = "0.6.0"
+source = "git+https://gitlab.redox-os.org/redox-os/syscall.git#2d11366fd160ec1dd3918164fa324275e1bab070"

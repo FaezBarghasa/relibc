@@ -10,7 +10,7 @@ description = "C runtime for relibc"
 path = "src/lib.rs"
 
 [dependencies]
-relibc = { path = "../", default-features = false }
+# relibc = { path = "../", default-features = false }
 
 [features]
 default = []

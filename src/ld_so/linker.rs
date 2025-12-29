@@ -6,8 +6,9 @@ use alloc::{
     vec::Vec,
 };
 use object::{
-    NativeEndian, elf,
+    elf,
     read::elf::{Rela as _, Sym},
+    NativeEndian, SymbolIndex,
 };
 
 use core::{
@@ -23,22 +24,22 @@ use crate::{
         fcntl, sys_mman,
         unistd::F_OK,
     },
-    ld_so::dso::{SymbolBinding, resolve_sym},
+    ld_so::dso::{resolve_sym, SymbolBinding},
     out::Out,
     platform::{
-        Pal, Sys,
         types::{c_int, c_uint, c_void},
+        Pal, Sys,
     },
     sync::rwlock::RwLock,
 };
 
 use super::{
-    PATH_SEP,
     access::accessible,
     callbacks::LinkerCallbacks,
-    debug::{_dl_debug_state, _r_debug, RTLDState},
-    dso::{DSO, ProgramHeader, Rela},
+    debug::{RTLDState, _dl_debug_state, _r_debug},
+    dso::{ProgramHeader, Rela, DSO},
     tcb::{Master, Tcb},
+    PATH_SEP,
 };
 
 #[derive(Debug, Copy, Clone)]
@@ -437,7 +438,10 @@ impl Linker {
     ) -> Result<ObjectHandle> {
         trace!(
             "[ld.so] load_library(name={:?}, resolve={:#?}, scope={:#?}, noload={})",
-            name, resolve, scope, noload
+            name,
+            resolve,
+            scope,
+            noload
         );
 
         if noload && resolve == Resolve::Now {
@@ -842,7 +846,8 @@ impl Linker {
             if debug {
                 eprintln!("[ld.so]: found at '{}'!", full_path);
             }
-            self.library_cache.insert(name.to_string(), full_path.clone());
+            self.library_cache
+                .insert(name.to_string(), full_path.clone());
             return Ok(full_path);
         } else {
             let mut search_paths = Vec::new();
@@ -862,7 +867,8 @@ impl Linker {
                     if debug {
                         eprintln!("[ld.so]: found at '{}'!", full_path);
                     }
-                    self.library_cache.insert(name.to_string(), full_path.clone());
+                    self.library_cache
+                        .insert(name.to_string(), full_path.clone());
                     return Ok(full_path);
                 }
             }
@@ -945,7 +951,7 @@ extern "C" fn __plt_resolve_inner(obj: *const DSO, relocation_index: c_uint) -> 
 
     let sym = obj
         .dynamic
-        .symbol(rela.symbol(NativeEndian, false).unwrap())
+        .symbol(SymbolIndex(rela.r_sym(NativeEndian, false) as usize))
         .expect("symbol not found");
     assert_ne!(sym.st_name(NativeEndian), 0);
 

@@ -1,8 +1,18 @@
 use core::mem::size_of;
 
-use syscall::{Map, Result, MapFlags, PROT_READ, PROT_WRITE};
+use syscall::{Map, MapFlags, Result, PROT_READ, PROT_WRITE};
 
-use crate::{RtTcb, Tcb, arch::*, proc::*, signal::{setup_sighandler, tmp_disable_signals}, static_proc_info, tcb_activate};
+use crate::{
+    arch::*,
+    proc::*,
+    signal::{setup_sighandler, tmp_disable_signals},
+    static_proc_info, tcb_activate, RtTcb, Tcb,
+};
+
+#[no_mangle]
+pub unsafe extern "C" fn __relibc_internal_rlct_clone_ret() {
+    unimplemented!()
+}
 
 /// Spawns a new context sharing the same address space as the current one (i.e. a new thread).
 pub unsafe fn rlct_clone_impl(
@@ -27,7 +37,7 @@ pub unsafe fn rlct_clone_impl(
 
         let buf = create_set_addr_space_buf(
             cur_addr_space_fd.as_raw_fd(),
-            __relibc_internal_rlct_clone_ret as usize,
+            self::__relibc_internal_rlct_clone_ret as usize,
             new_sp as usize,
         );
         new_addr_space_sel_fd.write(&buf)?;
@@ -46,8 +56,9 @@ pub unsafe fn rlct_clone_impl(
     // the same process) will be discarded. Process-specific signals will ignore this new thread,
     // until it has initialized its own signal handler.
 
+    let addr_fd = cur_thr_fd.dup(b"addrspace")?.to_upper().unwrap();
     let tcb_guard = MmapGuard::map(
-        cur_thr_fd.dup(b"addrspace")?.to_upper().unwrap(),
+        &addr_fd,
         &Map {
             size: syscall::PAGE_SIZE,
             address: 0,
@@ -58,11 +69,11 @@ pub unsafe fn rlct_clone_impl(
     let tcb = &mut *(tcb_guard.addr() as *mut Tcb);
     tcb.tcb_ptr = tcb;
     tcb.tcb_len = tcb_guard.len();
-    tcb.platform_specific.stack_base = new_stack_base;
+    tcb.platform_specific.stack_base = new_stack_base as *mut usize;
     tcb.platform_specific.stack_size = new_stack_size;
-    tcb.platform_specific.tls_dtv = new_dtv;
+    tcb.platform_specific.tls_dtv = new_dtv as *mut usize;
     tcb.platform_specific.tls_dtv_len = new_dtv_len;
-    tcb.platform_specific.tls_static_base = new_tls;
+    tcb.platform_specific.tls_static_base = new_tls as *mut usize;
     tcb.os_specific
         .thr_fd
         .get()

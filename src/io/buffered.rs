@@ -10,10 +10,11 @@
 
 //! Buffering wrappers for I/O traits
 
+use crate::platform::types::c_void;
 use core::{cmp, fmt};
 
 use crate::io::{
-    self, DEFAULT_BUF_SIZE, Error, ErrorKind, Initializer, SeekFrom, Write, prelude::*,
+    self, prelude::*, Error, ErrorKind, Initializer, SeekFrom, Write, DEFAULT_BUF_SIZE,
 };
 
 /// The `BufReader` struct adds buffering to any reader.
@@ -483,7 +484,7 @@ impl<W: Write> Write for BufWriter<W> {
             if self.buf.len() + buf.len() > self.buf.capacity() {
                 self.flush_buf()?;
             }
-    
+
             // Now we know the incoming buffer will fit, so copy it into our buffer.
             self.buf.write(buf)
         }
@@ -721,7 +722,7 @@ impl<W: Write> Write for LineWriter<W> {
 mod tests {
     use alloc::string::String;
 
-    use crate::io::{self, BufReader, BufWriter, LineWriter, SeekFrom, prelude::*};
+    use crate::io::{self, prelude::*, BufReader, BufWriter, LineWriter, SeekFrom};
     use test;
     // use crate::sync::atomic::{AtomicUsize, Ordering};
 
@@ -1088,7 +1089,6 @@ mod tests {
     //     b.iter(|| {
     //         BufWriter::new(io::sink())
     //     });
-    }
 
     struct AcceptOneThenFail {
         written: bool,

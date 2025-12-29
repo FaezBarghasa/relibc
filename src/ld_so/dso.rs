@@ -3,21 +3,22 @@
 //! * <https://www.akkadia.org/drepper/dsohowto.pdf>
 
 use object::{
-    NativeEndian, Object, StringTable, SymbolIndex, elf,
+    elf,
     read::elf::{
-        Dyn as _, GnuHashTable, HashTable as SysVHashTable, ProgramHeader as _, Rel as _,
-        Rela as _, Sym as _, Version, VersionTable,
+        Dyn as _, FileHeader as _, GnuHashTable, HashTable as SysVHashTable, ProgramHeader as _,
+        Rel as _, Rela as _, SectionTable, Sym as _, SymbolTable, Version, VersionTable,
     },
+    NativeEndian, Object, SectionIndex, StringTable, SymbolIndex,
 };
 
 use super::{
-    debug::{_r_debug, RTLDDebug},
-    linker::{__plt_resolve_trampoline, GLOBAL_SCOPE, Resolve, Scope, Symbol},
+    debug::{RTLDDebug, _r_debug},
+    linker::{Resolve, Scope, Symbol, __plt_resolve_trampoline, GLOBAL_SCOPE},
     tcb::Master,
 };
 use crate::{
     header::sys_mman,
-    platform::{Pal, Sys, types::c_void},
+    platform::{types::c_void, Pal, Sys},
 };
 use alloc::{
     collections::BTreeMap,
@@ -25,6 +26,11 @@ use alloc::{
     sync::Arc,
     vec::Vec,
 };
+#[cfg(target_pointer_width = "32")]
+type match_elf = elf::FileHeader32<NativeEndian>;
+#[cfg(target_pointer_width = "64")]
+type match_elf = elf::FileHeader64<NativeEndian>;
+
 use core::{
     ffi::c_char,
     mem::size_of,
@@ -37,7 +43,7 @@ pub type Relr = usize;
 
 #[cfg(target_pointer_width = "32")]
 mod shim {
-    use object::{NativeEndian, elf::*, read::elf::ElfFile32};
+    use object::{elf::*, read::elf::ElfFile32, NativeEndian};
     pub type Dyn = Dyn32<NativeEndian>;
     pub type Rel = Rel32<NativeEndian>;
     pub type Rela = Rela32<NativeEndian>;
@@ -49,7 +55,7 @@ mod shim {
 
 #[cfg(target_pointer_width = "64")]
 mod shim {
-    use object::{NativeEndian, elf::*, read::elf::ElfFile64};
+    use object::{elf::*, read::elf::ElfFile64, NativeEndian};
     pub type Dyn = Dyn64<NativeEndian>;
     pub type Rel = Rel64<NativeEndian>;
     pub type Rela = Rela64<NativeEndian>;
@@ -62,8 +68,14 @@ mod shim {
 pub use shim::*;
 
 enum HashTable<'a> {
-    Gnu(GnuHashTable<'a, FileHeader>),
-    Sysv(SysVHashTable<'a, FileHeader>),
+    Gnu(
+        GnuHashTable<'a, FileHeader>,
+        SymbolTable<'a, FileHeader, &'a [u8]>,
+    ),
+    Sysv(
+        SysVHashTable<'a, FileHeader>,
+        SymbolTable<'a, FileHeader, &'a [u8]>,
+    ),
 }
 
 impl<'a> HashTable<'a> {
@@ -73,48 +85,34 @@ impl<'a> HashTable<'a> {
         &self,
         name: &str,
         version: Option<&Version<'_>>,
-        symbols: &'a [Sym],
-        strings: StringTable<'a>,
         versions: &VersionTable<'a, FileHeader>,
     ) -> Option<(SymbolIndex, &'a Sym)> {
         let name = name.as_bytes();
 
         match self {
-            Self::Gnu(hash_table) => {
+            Self::Gnu(hash_table, symbols) => {
                 let hash = elf::gnu_hash(name);
-                hash_table.find(
-                    NativeEndian,
-                    name,
-                    hash,
-                    version,
-                    symbols,
-                    strings,
-                    versions,
-                )
+                hash_table
+                    .find(NativeEndian, name, hash, version, symbols, versions)
+                    .map(|(idx, sym)| (SymbolIndex(idx), sym))
             }
 
-            Self::Sysv(hash_table) => {
+            Self::Sysv(hash_table, symbols) => {
                 let hash = elf::hash(name);
-                hash_table.find(
-                    NativeEndian,
-                    name,
-                    hash,
-                    version,
-                    symbols,
-                    strings,
-                    versions,
-                )
+                hash_table
+                    .find(NativeEndian, name, hash, version, symbols, versions)
+                    .map(|(idx, sym)| (SymbolIndex(idx), sym))
             }
         }
     }
 
     fn symbol_table_length(&self) -> usize {
         match self {
-            Self::Gnu(hash_table) => hash_table
+            Self::Gnu(hash_table, _) => hash_table
                 .symbol_table_length(NativeEndian)
                 .expect("empty GNU symbol hash table")
                 as usize,
-            Self::Sysv(hash_table) => hash_table.symbol_table_length() as usize,
+            Self::Sysv(hash_table, _) => hash_table.symbol_table_length() as usize,
         }
     }
 }
@@ -131,6 +129,7 @@ pub(super) struct Dynamic<'data> {
     soname: Option<&'data str>,
     init_array: &'data [unsafe extern "C" fn()],
     fini_array: &'data [unsafe extern "C" fn()],
+    fini: Option<unsafe extern "C" fn()>,
     rela: &'data [Rela],
     relr: &'data [Relr],
     rel: &'data [Rel],
@@ -391,7 +390,12 @@ impl DSO {
             scope: spin::Once::new(),
         };
 
-        Ok((dso, tcb_master, elf.elf_program_headers().to_vec()))
+        Ok((dso, tcb_master, {
+            let ph_num = elf.raw_header().e_phnum(elf.endian());
+            let ph_off = elf.raw_header().e_phoff(elf.endian());
+            let ph_ptr = unsafe { data.as_ptr().add(ph_off as usize) as *const ProgramHeader };
+            unsafe { slice::from_raw_parts(ph_ptr, ph_num as usize).to_vec() }
+        }))
     }
 
     #[inline]
@@ -454,6 +458,9 @@ impl DSO {
         for f in self.dynamic.fini_array.iter().rev() {
             unsafe { f() }
         }
+        if let Some(f) = self.dynamic.fini {
+            unsafe { f() }
+        }
     }
 
     fn mmap_and_copy<'a>(
@@ -470,7 +477,11 @@ impl DSO {
         // Calculate virtual memory bounds
         let bounds = {
             let mut bounds_opt: Option<(usize, usize)> = None;
-            for ph in elf.elf_program_headers() {
+            for ph in elf
+                .raw_header()
+                .program_headers(elf.endian(), data)
+                .expect("invalid ph")
+            {
                 let voff = ph.p_vaddr(endian) % ph.p_align(endian);
                 let vaddr = (ph.p_vaddr(endian) - voff) as usize;
                 let vsize = ((ph.p_memsz(endian) + voff) as usize)
@@ -553,7 +564,11 @@ impl DSO {
 
         // Copy data
         let mut dynamic = None;
-        for ph in elf.elf_program_headers() {
+        for ph in elf
+            .raw_header()
+            .program_headers(elf.endian(), data)
+            .expect("invalid ph")
+        {
             match ph.p_type(endian) {
                 elf::PT_LOAD => {
                     if skip_load_segment_copy {
@@ -659,7 +674,8 @@ impl DSO {
         let mut needed = vec![];
         let mut jmprel = None;
         let mut soname = None;
-        let mut hash_table = None;
+        let mut gnu_hash = None;
+        let mut sysv_hash = None;
         let mut explicit_addend = None;
         let mut pltrelsz = None;
         let mut debug = None;
@@ -669,6 +685,7 @@ impl DSO {
         let (mut strtab_offset, mut strtab_size) = (None, None);
         let (mut init_array_ptr, mut init_array_len) = (None, None);
         let (mut fini_array_ptr, mut fini_array_len) = (None, None);
+        let mut fini = None;
         let (mut rela_offset, mut rela_len) = (None, None);
 
         for (i, entry) in entries.iter().enumerate() {
@@ -687,14 +704,14 @@ impl DSO {
                 // > matter if this is longer than needed...
                 elf::DT_GNU_HASH => {
                     let value = GnuHashTable::parse(NativeEndian, &mmap[relative_idx..])?;
-                    hash_table = Some(HashTable::Gnu(value));
+                    gnu_hash = Some(value);
                 }
 
                 // XXX: Both GNU_HASH and HASH may be present, we give priority
                 // to GNU_HASH as it is significantly faster.
-                elf::DT_HASH if hash_table.is_none() => {
+                elf::DT_HASH if gnu_hash.is_none() => {
                     let value = SysVHashTable::parse(NativeEndian, &mmap[relative_idx..])?;
-                    hash_table = Some(HashTable::Sysv(value));
+                    sysv_hash = Some(value);
                 }
 
                 elf::DT_PLTGOT => {
@@ -742,6 +759,8 @@ impl DSO {
 
                 elf::DT_FINI_ARRAY if val != 0 => fini_array_ptr = Some(ptr.cast::<InitFn>()),
                 elf::DT_FINI_ARRAYSZ => fini_array_len = Some(val as usize / size_of::<InitFn>()),
+
+                elf::DT_FINI if val != 0 => fini = Some(unsafe { core::mem::transmute(ptr) }),
 
                 elf::DT_SYMTAB => symtab_ptr = Some(ptr as *const Sym),
                 elf::DT_SYMENT => {
@@ -792,7 +811,70 @@ impl DSO {
         let soname = soname.map(get_str).transpose()?;
 
         let jmprel = jmprel.unwrap_or_default();
-        let hash_table = hash_table.expect("either DT_GNU_HASH and/or DT_HASH mut be present");
+
+        // Estimate symbol table length.
+        // We need to construct SymbolTable to pass to HashTable, but SymbolTable needs size.
+        // We'll use a safe upper bound provided by the file size or section headers if available,
+        // but here we are in a segment iterator.
+        // For now, let's use a dummy length if we can't determine it, or trust `sysv_hash.nchain` if available.
+        // `GnuHashTable` is harder.
+
+        let nchain = if let Some(sysv) = &sysv_hash {
+            unsafe {
+                let ptr = (sysv as *const _ as *const u32).add(1);
+                *ptr as usize
+            }
+        } else {
+            0
+        };
+
+        let symtab_len = if nchain > 0 {
+            nchain
+        } else {
+            // For GNU hash, we can't easily know total symbols without walking it?
+            // Actually, the chain is implicit.
+            // Let's assume the symtab entry size (DT_SYMENT) allows us to calculate max symbols from file end?
+            // `symtab_ptr` is known.
+            if let Some(ptr) = symtab_ptr {
+                let start = ptr as usize;
+                let end = mmap.as_ptr() as usize + mmap.len();
+                (end - start) / size_of::<Sym>()
+            } else {
+                0
+            }
+        };
+
+        let symbols_slice = unsafe { get_array(symtab_ptr, Some(symtab_len)) };
+        // We need 'static lifetime for now? No, 'a.
+        // But `parse_dynamic` returns `Dynamic<'a>`.
+        // `symbols` field in `Dynamic` is `&'a [Sym]`.
+
+        // Wait, `SymbolTable` holds `&'a [Sym]`.
+        let symbols_data = unsafe {
+            slice::from_raw_parts(
+                symbols_slice.as_ptr() as *const u8,
+                size_of_val(symbols_slice),
+            )
+        };
+        let dummy_sections: SectionTable<match_elf> = unsafe { core::mem::zeroed() };
+        let dummy_section: <match_elf as object::read::elf::FileHeader>::SectionHeader =
+            unsafe { core::mem::zeroed() };
+        let symtab = SymbolTable::parse(
+            NativeEndian,
+            symbols_data,
+            &dummy_sections,
+            SectionIndex(0),
+            &dummy_section,
+        )
+        .unwrap();
+
+        let hash_table = if let Some(gnu) = gnu_hash {
+            HashTable::Gnu(gnu, symtab)
+        } else if let Some(sysv) = sysv_hash {
+            HashTable::Sysv(sysv, symtab)
+        } else {
+            panic!("either DT_GNU_HASH and/or DT_HASH must be present");
+        };
 
         let init_array = unsafe { get_array(init_array_ptr, init_array_len) };
         let fini_array = unsafe { get_array(fini_array_ptr, fini_array_len) };
@@ -812,6 +894,7 @@ impl DSO {
                 dynstrtab,
                 init_array,
                 fini_array,
+                fini,
                 rela,
                 rel,
                 relr,
@@ -1078,7 +1161,7 @@ impl Drop for DSO {
 }
 
 fn is_pie_enabled(elf: &ElfFile) -> bool {
-    elf.elf_header().e_type.get(elf.endian()) == elf::ET_DYN
+    elf.raw_header().e_type.get(elf.endian()) == elf::ET_DYN
 }
 
 fn basename(path: &str) -> String {

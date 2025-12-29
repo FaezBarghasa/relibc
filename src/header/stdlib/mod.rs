@@ -8,8 +8,8 @@
 
 use core::{convert::TryFrom, intrinsics, iter, mem, ptr, slice};
 use rand::{
-    Rng, SeedableRng,
     distributions::{Alphanumeric, Distribution, Uniform},
+    Rng, SeedableRng,
 };
 use rand_jitter::JitterRng;
 use rand_xorshift::XorShiftRng;
@@ -27,12 +27,16 @@ use crate::{
         string::*,
         sys_ioctl::*,
         time::constants::CLOCK_MONOTONIC,
-        unistd::{self, _SC_PAGESIZE, sysconf},
+        unistd::{self, sysconf, _SC_PAGESIZE},
         wchar::*,
     },
     ld_so,
     out::Out,
-    platform::{self, Pal, Sys, types::*},
+    platform::{
+        self,
+        types::{wchar_t, *},
+        Pal, Sys,
+    },
     raw_cell::RawCell,
     sync::Once,
 };
@@ -210,7 +214,11 @@ macro_rules! dec_num_from_ascii {
             s = s.offset(1);
         }
 
-        if neg_sign { n } else { -n }
+        if neg_sign {
+            n
+        } else {
+            -n
+        }
     }};
 }
 
@@ -692,7 +700,7 @@ pub unsafe extern "C" fn memalign(alignment: size_t, size: size_t) -> *mut c_voi
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mblen(s: *const c_char, n: size_t) -> c_int {
     let mut wc: wchar_t = 0;
-    let mut state: mbstate_t = mbstate_t {};
+    let mut state: mbstate_t = unsafe { core::mem::zeroed() };
     let result: usize = mbrtowc(&mut wc, s, n, &mut state);
 
     if result == -1isize as usize {
@@ -708,14 +716,14 @@ pub unsafe extern "C" fn mblen(s: *const c_char, n: size_t) -> c_int {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/mbstowcs.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mbstowcs(pwcs: *mut wchar_t, mut s: *const c_char, n: size_t) -> size_t {
-    let mut state: mbstate_t = mbstate_t {};
+    let mut state: mbstate_t = unsafe { core::mem::zeroed() };
     mbsrtowcs(pwcs, &mut s, n, &mut state)
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/mbtowc.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn mbtowc(pwc: *mut wchar_t, s: *const c_char, n: size_t) -> c_int {
-    let mut state: mbstate_t = mbstate_t {};
+    let mut state: mbstate_t = unsafe { core::mem::zeroed() };
     mbrtowc(pwc, s, n, &mut state) as c_int
 }
 
@@ -805,7 +813,11 @@ pub unsafe extern "C" fn mkostemps(
         let name = CStr::from_ptr(name);
         let fd = Sys::open(name, flags, 0o600).or_minus_one_errno();
 
-        if fd >= 0 { Some(fd) } else { None }
+        if fd >= 0 {
+            Some(fd)
+        } else {
+            None
+        }
     })
     .unwrap_or(-1)
 }
@@ -888,7 +900,11 @@ pub unsafe extern "C" fn posix_memalign(
     if alignment % VOID_PTR_SIZE == 0 && alignment.is_power_of_two() {
         let ptr = platform::alloc_align(size, alignment);
         *memptr = ptr;
-        if ptr.is_null() { ENOMEM } else { 0 }
+        if ptr.is_null() {
+            ENOMEM
+        } else {
+            0
+        }
     } else {
         *memptr = ptr::null_mut();
         EINVAL
@@ -1658,14 +1674,14 @@ pub unsafe extern "C" fn valloc(size: size_t) -> *mut c_void {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/wcstombs.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wcstombs(s: *mut c_char, mut pwcs: *const wchar_t, n: size_t) -> size_t {
-    let mut state: mbstate_t = mbstate_t {};
+    let mut state: mbstate_t = unsafe { core::mem::zeroed() };
     wcsrtombs(s, &mut pwcs, n, &mut state)
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/wctomb.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn wctomb(s: *mut c_char, wc: wchar_t) -> c_int {
-    let mut state: mbstate_t = mbstate_t {};
+    let mut state: mbstate_t = unsafe { core::mem::zeroed() };
     let result: usize = wcrtomb(s, wc, &mut state);
 
     if result == -1isize as usize {
