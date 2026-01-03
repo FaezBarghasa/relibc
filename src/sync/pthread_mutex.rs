@@ -9,7 +9,7 @@ use crate::{
     pthread::*,
 };
 
-use crate::platform::{Pal, Sys, types::*};
+use crate::platform::{types::*, Pal, Sys};
 
 use super::FutexWaitResult;
 
@@ -30,7 +30,7 @@ const INDEX_MASK: u32 = !WAITING_BIT;
 const RECURSIVE_COUNT_MAX_INCLUSIVE: u32 = u32::MAX;
 // TODO: How many spins should we do before it becomes more time-economical to enter kernel mode
 // via futexes?
-const SPIN_COUNT: usize = 100;
+const SPIN_COUNT: usize = 1000;
 
 impl RlctMutex {
     pub(crate) fn new(attr: &RlctMutexAttr) -> Result<Self, Errno> {
@@ -221,7 +221,12 @@ impl RlctMutex {
             }
         }
 
-        if self.inner.fetch_sub(self.inner.load(Ordering::Relaxed) & INDEX_MASK, Ordering::Release) & WAITING_BIT != 0 {
+        if self.inner.fetch_sub(
+            self.inner.load(Ordering::Relaxed) & INDEX_MASK,
+            Ordering::Release,
+        ) & WAITING_BIT
+            != 0
+        {
             let _ = crate::sync::futex_wake(&self.inner, 1);
         }
 

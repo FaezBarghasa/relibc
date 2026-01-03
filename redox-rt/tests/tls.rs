@@ -1,8 +1,7 @@
 #![feature(asm)]
 
+use redox_rt::{initialize_freestanding, proc::FdGuard, RtTcb, Tcb};
 use std::thread;
-use redox_rt::{Tcb, RtTcb, initialize_freestanding};
-use redox_rt::proc::FdGuard;
 
 #[test]
 fn test_tls() {
@@ -10,6 +9,8 @@ fn test_tls() {
     use redox_rt::arch::aarch64::{get_thread_local, set_thread_local};
     #[cfg(target_arch = "riscv64")]
     use redox_rt::arch::riscv64::{get_thread_local, set_thread_local};
+    #[cfg(target_arch = "x86_64")]
+    use redox_rt::arch::x86_64::{get_thread_local, set_thread_local};
 
     assert_eq!(get_thread_local(), 42);
     set_thread_local(100);
@@ -35,9 +36,11 @@ fn test_tls() {
 #[test]
 fn test_fork_exec_simulation() {
     #[cfg(target_arch = "aarch64")]
-    use redox_rt::arch::aarch64::{get_thread_local, set_thread_local, deactivate_tcb};
+    use redox_rt::arch::aarch64::{deactivate_tcb, get_thread_local, set_thread_local};
     #[cfg(target_arch = "riscv64")]
-    use redox_rt::arch::riscv64::{get_thread_local, set_thread_local, deactivate_tcb};
+    use redox_rt::arch::riscv64::{deactivate_tcb, get_thread_local, set_thread_local};
+    #[cfg(target_arch = "x86_64")]
+    use redox_rt::arch::x86_64::{deactivate_tcb, get_thread_local, set_thread_local};
 
     // 1. Simulate fork
     set_thread_local(300);

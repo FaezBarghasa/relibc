@@ -50,6 +50,23 @@ pub struct TcbExtension {
     pub tls_dtv: *mut usize,
     pub tls_dtv_len: usize,
     pub tls_static_base: *mut usize,
+    pub my_thread_local: usize,
+}
+
+pub fn get_thread_local() -> usize {
+    let tcb: *mut Tcb;
+    unsafe {
+        core::arch::asm!("mov {}, fs:[0]", out(reg) tcb);
+        (*tcb).platform_specific.my_thread_local
+    }
+}
+
+pub fn set_thread_local(value: usize) {
+    let tcb: *mut Tcb;
+    unsafe {
+        core::arch::asm!("mov {}, fs:[0]", out(reg) tcb);
+        (*tcb).platform_specific.my_thread_local = value;
+    }
 }
 
 pub unsafe fn deactivate_tcb(_fd: &FdGuardUpper) -> Result<()> {

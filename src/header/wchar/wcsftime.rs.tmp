@@ -1,0 +1,61 @@
+use super::{wcrtomb, WriteWchar};
+use crate::{
+    c_str::CStr,
+    header::{
+        langinfo::{nl_item, nl_langinfo, ABDAY_1, ABMON_1, AM_STR, DAY_1, MON_1, PM_STR},
+        stdlib::MB_CUR_MAX,
+        time::tm,
+    },
+    platform::{self, types::*},
+};
+use alloc::{string::String, vec::Vec};
+use core::fmt;
+
+unsafe fn langinfo_to_wcs(item: nl_item, w: &mut dyn WriteWchar) -> bool {
+    let ptr = nl_langinfo(item);
+    if ptr.is_null() {
+        return true;
+    }
+    let c_str = CStr::from_ptr(ptr);
+    for &byte in c_str.to_bytes() {
+        if w.write_wchar(byte as wchar_t).is_err() {
+            return false;
+        }
+    }
+    true
+}
+
+struct LocalCountingWriter<W> {
+    inner: W,
+    written: usize,
+}
+
+impl<W: WriteWchar> LocalCountingWriter<W> {
+    fn new(inner: W) -> Self {
+        Self { inner, written: 0 }
+    }
+}
+
+impl<W: WriteWchar> WriteWchar for LocalCountingWriter<W> {
+    fn write_wchar(&mut self, c: wchar_t) -> fmt::Result {
+        self.inner.write_wchar(c)?;
+        self.written += 1;
+        Ok(())
+    }
+}
+
+pub unsafe fn wcsftime<W: WriteWchar>(w: &mut W, format: *const wchar_t, t: *const tm) -> size_t {
+    pub unsafe fn inner_wcsftime<W: WriteWchar>(
+        w: &mut W,
+        mut format: *const wchar_t,
+        t: *const tm,
+    ) -> bool {
+        // ... (rest of inner function, likely large, I should assume I replace lines 335)
+        // Wait, I am overwriting the whole FILE? No, this tool `write_to_file` overwrites.
+        // I should use `replace_file_content`.
+        // I will cancel `write_to_file` and use `replace_file_content` or `multi_replace`.
+        // But I need to insert the struct.
+        false // dummy
+    }
+    0 // dummy
+}

@@ -26,6 +26,7 @@ static mut __tcb_impl: Tcb = Tcb {
         tls_dtv: core::ptr::null_mut(),
         tls_dtv_len: 0,
         tls_static_base: core::ptr::null_mut(),
+        my_thread_local: 0,
     },
 };
 

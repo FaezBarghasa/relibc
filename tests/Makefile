@@ -36,6 +36,7 @@ EXPECT_NAMES=\
 	fcntl/create \
 	fcntl/fcntl \
 	features \
+	fenv \
 	fnmatch \
 	glob \
 	iso646 \
@@ -363,7 +364,9 @@ FLAGS=\
 	-Wno-deprecated-declarations \
 	-pedantic \
 	-g \
-	-I .
+	-I . \
+	-I ../openlibm/include \
+	-I ../openlibm/src
 
 STATIC_FLAGS=\
 	-static

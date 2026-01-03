@@ -101,6 +101,7 @@ pub fn new_tcb(stack: Stack) -> Tcb {
             tls_dtv: ptr::null_mut(),
             tls_dtv_len: 0,
             tls_static_base: ptr::null_mut(),
+            my_thread_local: 0,
         },
     }
 }
