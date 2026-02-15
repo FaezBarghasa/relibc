@@ -5,16 +5,16 @@ use core::{
 };
 
 use syscall::{
-    CallFlags, EINVAL, ERESTART, TimeSpec,
-    error::{self, EINTR, Error, Result},
+    error::{self, Error, Result, EINTR},
+    CallFlags, TimeSpec, EINVAL, ERESTART,
 };
 
 use crate::{
-    DYNAMIC_PROC_INFO, DynamicProcInfo, RtTcb, Tcb,
     arch::manually_enter_trampoline,
     protocol::{ProcCall, ProcKillTarget, RtSigInfo, ThreadCall, WaitFlags},
     read_proc_meta,
     signal::tmp_disable_signals,
+    DynamicProcInfo, RtTcb, Tcb, DYNAMIC_PROC_INFO,
 };
 
 #[inline]
@@ -25,14 +25,14 @@ fn wrapper<T>(restart: bool, erestart: bool, mut f: impl FnMut() -> Result<T>) -
         let res = f();
         let code = if erestart { ERESTART } else { EINTR };
 
-        if let Err(err) = res
-            && err == Error::new(code)
-        {
-            unsafe {
-                manually_enter_trampoline();
-            }
-            if restart && unsafe { (*rt_sigarea.arch.get()).last_sig_was_restart } {
-                continue;
+        if let Err(err) = res {
+            if err == Error::new(code) {
+                unsafe {
+                    manually_enter_trampoline();
+                }
+                if restart && unsafe { (*rt_sigarea.arch.get()).last_sig_was_restart } {
+                    continue;
+                }
             }
         }
 

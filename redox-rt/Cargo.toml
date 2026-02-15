@@ -15,8 +15,9 @@ plain = "0.2"
 syscall = { package = "redox_syscall", version = "0.5.13" }
 
 generic-rt = { path = "../generic-rt", features = ["expect-tls-free"] }
-c-rt = { path = "../c-rt", optional = true }
+c-rt-dep = { package = "c-rt", path = "../c-rt", optional = true }
 
 [features]
+c-rt = ["dep:c-rt-dep", "expect-tls-free"]
 expect-tls-free = []
 proc = []

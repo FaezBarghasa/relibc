@@ -1,11 +1,10 @@
 use core::{
     cell::SyncUnsafeCell,
     fmt::Debug,
-    mem::{MaybeUninit, size_of},
+    mem::{size_of, MaybeUninit},
 };
 
 use crate::{
-    DYNAMIC_PROC_INFO, RtTcb, StaticProcInfo,
     arch::*,
     auxv_constants::*,
     auxv_defs::*,
@@ -13,10 +12,10 @@ use crate::{
     protocol::{ProcCall, ThreadCall},
     read_proc_meta,
     sys::{proc_call, thread_call},
+    RtTcb, StaticProcInfo, DYNAMIC_PROC_INFO,
 };
 
-use syscall::flag::*;
-use syscall::number::*;
+use syscall::{flag::*, number::*};
 
 use crate::signal::PosixStackt;
 
@@ -26,19 +25,19 @@ use alloc::{boxed::Box, collections::BTreeMap, vec};
 #[cfg(target_pointer_width = "32")]
 use goblin::elf32::{
     header::Header,
-    program_header::program_header32::{PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD, ProgramHeader},
+    program_header::program_header32::{ProgramHeader, PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD},
 };
 #[cfg(target_pointer_width = "64")]
 use goblin::elf64::{
     header::Header,
-    program_header::program_header64::{PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD, ProgramHeader},
+    program_header::program_header64::{ProgramHeader, PF_R, PF_W, PF_X, PT_INTERP, PT_LOAD},
 };
 
 use syscall::{
-    CallFlags, GrantDesc, GrantFlags, MAP_FIXED_NOREPLACE, MAP_SHARED, Map, PAGE_SIZE, PROT_EXEC,
-    PROT_READ, PROT_WRITE, SetSighandlerData,
     error::*,
     flag::{MapFlags, SEEK_SET},
+    CallFlags, GrantDesc, GrantFlags, Map, SetSighandlerData, MAP_FIXED_NOREPLACE, MAP_SHARED,
+    PAGE_SIZE, PROT_EXEC, PROT_READ, PROT_WRITE,
 };
 
 use crate::arch::deactivate_tcb;
@@ -280,9 +279,16 @@ where
         let new_page_no = sp / PAGE_SIZE;
         let new_page_off = sp % PAGE_SIZE;
 
-        let page = if let Some(ref mut page) = stack_page
-            && old_page_no == new_page_no
-        {
+        let page = if let Some(ref mut page) = stack_page {
+            if old_page_no == new_page_no {
+                Some(page)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let page = if let Some(page) = page {
             page
         } else if let Some(ref mut stack_page) = stack_page {
             stack_page.remap(new_page_no * PAGE_SIZE, PROT_READ | PROT_WRITE)?;
@@ -1062,8 +1068,7 @@ pub fn new_child_process(args: &ForkArgs<'_>) -> Result<NewChildProc> {
 
 pub unsafe fn make_init() -> (&'static FdGuardUpper, &'static FdGuardUpper) {
     let proc_fd = FdGuard::new(
-        syscall::open("/scheme/proc/init", syscall::O_CLOEXEC)
-            .expect("failed to create init"),
+        syscall::open("/scheme/proc/init", syscall::O_CLOEXEC).expect("failed to create init"),
     )
     .to_upper()
     .unwrap();

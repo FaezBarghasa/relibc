@@ -30,7 +30,7 @@ static mut __tcb_impl: Tcb = Tcb {
     },
 };
 
-#[cfg(not(feature = "expect-tls-free"))]
+#[cfg(all(feature = "c-rt", not(feature = "expect-tls-free")))]
 compile_error!("The c-rt feature expects the expect-tls-free feature to be enabled.");
 
 pub trait ExpectTlsFree<T> {
