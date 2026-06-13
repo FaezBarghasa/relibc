@@ -629,7 +629,7 @@ impl Linker {
 
                     // Stash
                     let new_tls_end = new_tcb.generic.tls_end;
-                    let new_tls_len = new_tcb.generic.tls_len;
+                    let new_tls_len = new_tcb.tls_len;
                     let new_tcb_ptr = new_tcb.generic.tcb_ptr;
                     let new_tcb_len = new_tcb.generic.tcb_len;
 
@@ -657,7 +657,7 @@ impl Linker {
                     let _guard = tmp_disable_signals();
                     // Restore
                     new_tcb.generic.tls_end = new_tls_end;
-                    new_tcb.generic.tls_len = new_tls_len;
+                    new_tcb.tls_len = new_tls_len;
                     new_tcb.generic.tcb_ptr = new_tcb_ptr;
                     new_tcb.generic.tcb_len = new_tcb_len;
 

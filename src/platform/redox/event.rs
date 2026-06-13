@@ -42,7 +42,7 @@ pub unsafe extern "C" fn redox_event_queue_get_events_v1(
         );
         buf.write(event::raw::RawEventV1 {
             fd: event.id,
-            flags: event::raw::EventFlags::from(event.flags).bits(),
+            flags: event::raw::EventFlags::from_bits_truncate(event.flags.bits() as _).bits(),
             user_data: event.data,
         });
 
@@ -61,9 +61,11 @@ pub unsafe extern "C" fn redox_event_queue_ctl_v1(
             queue,
             &syscall::Event {
                 id: fd,
-                flags: event::raw::EventFlags::from_bits(flags)
-                    .ok_or(Error::new(EINVAL))?
-                    .into(),
+                flags: syscall::EventFlags::from_bits_truncate(
+                    event::raw::EventFlags::from_bits(flags)
+                        .ok_or(Error::new(EINVAL))?
+                        .bits() as _
+                ),
                 data: user_data,
             },
         )?;
