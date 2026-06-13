@@ -21,7 +21,7 @@ use crate::{
     platform::{self, Pal, Sys, types::*},
     sync::{Mutex, MutexGuard},
 };
-use __libc_only_for_layout_checks::EINVAL;
+
 use alloc::{boxed::Box, collections::BTreeSet, string::String, vec::Vec};
 use chrono::{
     DateTime, Datelike, FixedOffset, NaiveDate, NaiveDateTime, Offset, ParseError, TimeZone,

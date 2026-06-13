@@ -35,8 +35,8 @@ pub union pthread_barrierattr_t {
 }
 #[repr(C)]
 pub union pthread_mutex_t {
-    __relibc_internal_size: [c_uchar; 12],
-    __relibc_internal_align: c_int,
+    __relibc_internal_size: [c_uchar; 32],
+    __relibc_internal_align: size_t,
 }
 #[repr(C)]
 pub union pthread_mutexattr_t {

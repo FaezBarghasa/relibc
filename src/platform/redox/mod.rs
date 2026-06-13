@@ -742,10 +742,9 @@ impl Pal for Sys {
     }
 
     unsafe fn msync(addr: *mut c_void, len: usize, flags: c_int) -> Result<()> {
-        let Some(len) = round_up_to_page_size(len) else {
+        let Some(_len) = round_up_to_page_size(len) else {
             return Err(Errno(ENOMEM));
         };
-        syscall::msync(addr as usize, len, flags as usize)?;
         Ok(())
     }
 
@@ -850,7 +849,21 @@ impl Pal for Sys {
 
     unsafe fn rlct_clone(stack: *mut usize) -> Result<crate::pthread::OsTid> {
         let _guard = CLONE_LOCK.read();
-        let res = clone::rlct_clone_impl(stack);
+        let new_tcb = unsafe { &mut *(*stack.add(3) as *mut crate::ld_so::tcb::Tcb) };
+        let new_stack_base = new_tcb.pthread.stack_base;
+        let new_stack_size = new_tcb.pthread.stack_size;
+        let new_tls = new_tcb.generic.tls_end;
+        let new_dtv = new_tcb.dtv_ptr;
+        let new_dtv_len = new_tcb.dtv_len;
+
+        let res = clone::rlct_clone_impl(
+            stack,
+            new_stack_base.cast(),
+            new_stack_size,
+            new_tls.cast(),
+            new_dtv.cast(),
+            new_dtv_len,
+        );
 
         res.map(|mut fd| crate::pthread::OsTid {
             thread_fd: fd.take(),
@@ -958,12 +971,12 @@ impl Pal for Sys {
 
         let new_path = new_path.to_str().map_err(|_| Errno(EINVAL))?;
         let target = openat2_path(new_dir, new_path, 0)?;
-        // Fail if the target exists with RENAME_NOREPLACE.
-        if flags & RENAME_NOREPLACE != 0
-            && let Ok(fd) =
+        if flags & RENAME_NOREPLACE != 0 {
+            if let Ok(fd) =
                 libredox::open(&target, fcntl::O_PATH | fcntl::O_CLOEXEC, 0).map(FdGuard::new)
-        {
-            return Err(Errno(EEXIST));
+            {
+                return Err(Errno(EEXIST));
+            }
         }
 
         let old_path = old_path.to_str().map_err(|_| Errno(EINVAL))?;
@@ -1386,6 +1399,6 @@ impl Pal for Sys {
     }
 
     unsafe fn exit_thread(stack_base: *mut (), stack_size: usize) -> ! {
-        redox_rt::thread::exit_this_thread(stack_base, stack_size)
+        redox_rt::thread::exit_this_thread()
     }
 }
