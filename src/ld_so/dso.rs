@@ -21,7 +21,6 @@ use crate::{
     platform::{types::c_void, Pal, Sys},
 };
 use alloc::{
-    collections::BTreeMap,
     string::{String, ToString},
     sync::Arc,
     vec::Vec,
@@ -416,7 +415,7 @@ impl DSO {
 
     pub fn get_sym<'a>(&self, name: &'a str) -> Option<(Symbol<'a>, SymbolBinding)> {
         let sym_idx = self.symbol_map.get(name, &self.dynamic)?;
-        let sym = self.dynamic.symbol(*sym_idx)?;
+        let sym = self.dynamic.symbol(sym_idx)?;
 
         if sym.st_shndx(NativeEndian) == elf::SHN_UNDEF {
             return None;

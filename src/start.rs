@@ -150,6 +150,11 @@ pub unsafe extern "C" fn relibc_start_v1(
     relibc_verify_host();
 
     #[cfg(target_os = "redox")]
+    unsafe {
+        redox_rt::start::init_cpuid_features();
+    }
+
+    #[cfg(target_os = "redox")]
     let thr_fd = redox_rt::proc::FdGuard::new(
         crate::platform::get_auxv_raw(sp.auxv().cast(), redox_rt::auxv_defs::AT_REDOX_THR_FD)
             .expect_notls("no thread fd present"),

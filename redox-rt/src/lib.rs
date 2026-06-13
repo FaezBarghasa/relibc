@@ -5,7 +5,8 @@
     core_intrinsics,
     int_roundings,
     slice_ptr_get,
-    sync_unsafe_cell
+    sync_unsafe_cell,
+    x86_amx_intrinsics
 )]
 #![forbid(unreachable_patterns)]
 
