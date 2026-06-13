@@ -163,3 +163,4 @@ pub mod wctype;
 // TODO: xti.h (deprecated)
 
 pub mod sys_binder;
+pub mod sys_sync;
