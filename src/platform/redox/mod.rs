@@ -209,6 +209,9 @@ impl Pal for Sys {
     }
 
     fn close(fd: c_int) -> Result<()> {
+        if crate::header::sys_sync::ntsync_close(fd) {
+            return Ok(());
+        }
         syscall::close(fd as usize)?;
         Ok(())
     }
@@ -803,6 +806,10 @@ impl Pal for Sys {
 
     fn open(path: CStr, oflag: c_int, mode: mode_t) -> Result<c_int> {
         let path = path.to_str().map_err(|_| Errno(EINVAL))?;
+
+        if path == "/dev/ntsync" || path == "ntsync:" {
+            return crate::header::sys_sync::ntsync_open();
+        }
 
         // POSIX states that umask should affect the following:
         //

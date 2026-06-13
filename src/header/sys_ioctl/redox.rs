@@ -61,7 +61,92 @@ fn dup_write<T>(fd: c_int, name: &str, t: &T) -> Result<usize> {
     Ok(bytes / size)
 }
 
+unsafe fn ntsync_ioctl(fd: c_int, request: c_ulong, out: *mut c_void) -> Result<c_int> {
+    use crate::header::sys_sync::*;
+    let request_val = request as u32;
+    match request_val {
+        0xc0084e80 => { // NTSYNC_IOC_CREATE_SEM
+            let args = &mut *(out as *mut ntsync_sem_args);
+            ntsync_create_sem(args.count, args.max)
+        }
+        0xc0084e84 => { // NTSYNC_IOC_CREATE_MUTEX
+            let args = &mut *(out as *mut ntsync_mutex_args);
+            ntsync_create_mutex(args.owner, args.count)
+        }
+        0xc0084e88 => { // NTSYNC_IOC_CREATE_EVENT
+            let args = &mut *(out as *mut ntsync_event_args);
+            ntsync_create_event(args.manual != 0, args.signaled != 0)
+        }
+        0xc0044e81 => { // NTSYNC_IOC_SEM_POST
+            let release_count = *(out as *const u32);
+            let prev = ntsync_sem_post(fd, release_count)?;
+            *(out as *mut u32) = prev;
+            Ok(0)
+        }
+        0xc0084e85 => { // NTSYNC_IOC_MUTEX_UNLOCK
+            let args = &mut *(out as *mut ntsync_mutex_args);
+            let (prev_owner, prev_count) = ntsync_mutex_unlock(fd, args.owner)?;
+            args.owner = prev_owner;
+            args.count = prev_count;
+            Ok(0)
+        }
+        0xc0044e89 => { // NTSYNC_IOC_EVENT_SET
+            let prev = ntsync_event_set(fd)?;
+            *(out as *mut u32) = prev;
+            Ok(0)
+        }
+        0xc0044e8a => { // NTSYNC_IOC_EVENT_RESET
+            let prev = ntsync_event_reset(fd)?;
+            *(out as *mut u32) = prev;
+            Ok(0)
+        }
+        0xc0044e8b => { // NTSYNC_IOC_EVENT_PULSE
+            let prev = ntsync_event_pulse(fd)?;
+            *(out as *mut u32) = prev;
+            Ok(0)
+        }
+        0x80084e8c => { // NTSYNC_IOC_SEM_READ
+            let args = &mut *(out as *mut ntsync_sem_args);
+            let (count, max) = ntsync_sem_read(fd)?;
+            args.count = count;
+            args.max = max;
+            Ok(0)
+        }
+        0x80084e8d => { // NTSYNC_IOC_MUTEX_READ
+            let args = &mut *(out as *mut ntsync_mutex_args);
+            let (owner, count) = ntsync_mutex_read(fd)?;
+            args.owner = owner;
+            args.count = count;
+            Ok(0)
+        }
+        0x80084e8e => { // NTSYNC_IOC_EVENT_READ
+            let args = &mut *(out as *mut ntsync_event_args);
+            let (manual, signaled) = ntsync_event_read(fd)?;
+            args.manual = if manual { 1 } else { 0 };
+            args.signaled = signaled;
+            Ok(0)
+        }
+        0xc0204e82 => { // NTSYNC_IOC_WAIT_ANY
+            let args = &mut *(out as *mut ntsync_wait_args);
+            let handles = core::slice::from_raw_parts(args.objs as *const c_int, args.count as usize);
+            let index = ntsync_wait_any(handles, args.timeout)?;
+            args.index = index;
+            Ok(0)
+        }
+        0xc0204e86 => { // NTSYNC_IOC_WAIT_ALL
+            let args = &mut *(out as *mut ntsync_wait_args);
+            let handles = core::slice::from_raw_parts(args.objs as *const c_int, args.count as usize);
+            ntsync_wait_all(handles, args.timeout)?;
+            Ok(0)
+        }
+        _ => Err(Errno(EINVAL)),
+    }
+}
+
 unsafe fn ioctl_inner(fd: c_int, request: c_ulong, out: *mut c_void) -> Result<c_int> {
+    if crate::header::sys_sync::is_ntsync_fd(fd) {
+        return ntsync_ioctl(fd, request, out);
+    }
     match request {
         FIONBIO => {
             let mut flags = Sys::fcntl(fd, fcntl::F_GETFL, 0)?;

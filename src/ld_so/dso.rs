@@ -329,7 +329,7 @@ pub struct DSO {
     pub tls_offset: usize,
 
     pub(super) dynamic: Dynamic<'static>,
-    symbol_map: BTreeMap<String, SymbolIndex>,
+    symbol_map: Blake3SymbolMap,
 
     pub scope: spin::Once<Scope>,
     /// Position Independent Executable.
@@ -364,12 +364,7 @@ impl DSO {
             elf.entry() as usize
         };
 
-        let mut symbol_map = BTreeMap::new();
-        for (i, sym) in dynamic.symbols.iter().enumerate() {
-            if let Some(name) = dynamic.symbol_name(SymbolIndex(i)) {
-                symbol_map.insert(name.to_string(), SymbolIndex(i));
-            }
-        }
+        let symbol_map = Blake3SymbolMap::new(dynamic.symbols, &dynamic);
 
         let dso = DSO {
             name,
@@ -420,7 +415,7 @@ impl DSO {
     }
 
     pub fn get_sym<'a>(&self, name: &'a str) -> Option<(Symbol<'a>, SymbolBinding)> {
-        let sym_idx = self.symbol_map.get(name)?;
+        let sym_idx = self.symbol_map.get(name, &self.dynamic)?;
         let sym = self.dynamic.symbol(*sym_idx)?;
 
         if sym.st_shndx(NativeEndian) == elf::SHN_UNDEF {
@@ -1179,4 +1174,70 @@ pub fn resolve_sym<'a>(
     scopes: &[&'a Scope],
 ) -> Option<(Symbol<'a>, SymbolBinding, Arc<DSO>)> {
     scopes.iter().find_map(|scope| scope.get_sym(name))
+}
+
+#[derive(Clone)]
+pub struct Blake3SymbolMap {
+    table: Vec<Option<(u64, SymbolIndex)>>,
+    mask: usize,
+}
+
+impl Blake3SymbolMap {
+    pub fn new(symbols: &[Sym], dynamic: &Dynamic) -> Self {
+        let num_symbols = symbols.len();
+        let capacity = (num_symbols * 2).next_power_of_two().max(8);
+        let mask = capacity - 1;
+        let mut table = vec![None; capacity];
+
+        for i in 0..num_symbols {
+            if let Some(name) = dynamic.symbol_name(SymbolIndex(i)) {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(name.as_bytes());
+                let hash_bytes = hasher.finalize();
+                let key = u64::from_ne_bytes(hash_bytes.as_bytes()[0..8].try_into().unwrap());
+
+                let mut idx = (key as usize) & mask;
+                loop {
+                    match table[idx] {
+                        None => {
+                            table[idx] = Some((key, SymbolIndex(i)));
+                            break;
+                        }
+                        Some(_) => {
+                            idx = (idx + 1) & mask;
+                        }
+                    }
+                }
+            }
+        }
+
+        Self { table, mask }
+    }
+
+    pub fn get(&self, name: &str, dynamic: &Dynamic) -> Option<SymbolIndex> {
+        if self.table.is_empty() {
+            return None;
+        }
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(name.as_bytes());
+        let hash_bytes = hasher.finalize();
+        let key = u64::from_ne_bytes(hash_bytes.as_bytes()[0..8].try_into().unwrap());
+
+        let mut idx = (key as usize) & self.mask;
+        loop {
+            match self.table[idx] {
+                Some((k, sym_idx)) => {
+                    if k == key {
+                        if let Some(sym_name) = dynamic.symbol_name(sym_idx) {
+                            if sym_name == name {
+                                return Some(sym_idx);
+                            }
+                        }
+                    }
+                    idx = (idx + 1) & self.mask;
+                }
+                None => return None,
+            }
+        }
+    }
 }

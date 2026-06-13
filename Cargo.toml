@@ -25,36 +25,44 @@ exclude = ["tests", "dlmalloc-rs"]
 cc = "1"
 
 [dependencies]
-zerocopy = { version = "0.7.35", default-features = false, features = ["derive"] }
+zerocopy = { version = "0.8.52", default-features = false, features = [
+    "derive",
+] }
 bitflags = "2"
 cbitset = "0.2"
 posix-regex = { version = "0.1.4", features = ["no_std"] }
 macros = { path = "macros" }
 
 # TODO: For some reason, rand_jitter hasn't been updated to use the latest rand_core
-rand = { version = "0.8", default-features = false, features = ["small_rng"] }
-rand_xorshift = "0.3"
-rand_jitter = "0.4"
+rand = { version = "0.10.1", default-features = false, features = [
+    "small_rng",
+] }
+rand_xorshift = "0.5.0"
+rand_jitter = "0.6.1"
 
 memchr = { version = "2.2.0", default-features = false }
 plain = "0.2"
-unicode-width = "0.1"
+unicode-width = "0.2.2"
 __libc_only_for_layout_checks = { package = "libc", version = "0.2.149", optional = true }
-md5-crypto = { package = "md-5", version = "0.10.6", default-features = false }
-sha-crypt = { version = "0.5", default-features = false }
+md5-crypto = { package = "md-5", version = "0.11.0", default-features = false }
+sha-crypt = { version = "0.6.0", default-features = false }
 base64ct = { version = "1.6", default-features = false, features = ["alloc"] }
-bcrypt-pbkdf = { version = "0.10", default-features = false, features = [
+bcrypt-pbkdf = { version = "0.11.0", default-features = false, features = [
     "alloc",
 ] }
-scrypt = { version = "0.11", default-features = false, features = ["simple"] }
-pbkdf2 = { version = "0.12", features = ["sha2"] }
-sha2 = { version = "0.10", default-features = false }
+scrypt = { version = "0.12.0", default-features = false, features = ["simple"] }
+pbkdf2 = { version = "0.13.0", features = ["sha2"] }
+sha2 = { version = "0.11.0", default-features = false }
 generic-rt = { path = "generic-rt", features = ["expect-tls-free"] }
-chrono-tz = {version = "0.10", default-features = false}
-chrono = {version = "0.4", default-features = false, features = ["alloc"]}
+chrono-tz = { version = "0.10", default-features = false }
+chrono = { version = "0.4", default-features = false, features = ["alloc"] }
 libm = "0.2"
-object = { version = "0.32", default-features = false, features = ["elf", "read_core"] }
-spin = "0.9.8"
+object = { version = "0.39.1", default-features = false, features = [
+    "elf",
+    "read_core",
+] }
+blake3 = { version = "1.5.1", default-features = false }
+spin = "0.12.0"
 argon2 = "0.5.3"
 
 [dependencies.dlmalloc]
@@ -66,7 +74,7 @@ features = ["c_api"]
 sc = "0.2.3"
 
 [target.'cfg(target_os = "redox")'.dependencies]
-redox_syscall = "0.5.13"
+redox_syscall = "0.8.1"
 redox-rt = { path = "redox-rt", features = ["proc"] }
 redox-path = "0.3"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git", default-features = false, features = [
