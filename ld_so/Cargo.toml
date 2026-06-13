@@ -8,7 +8,7 @@ edition = "2021"
 macros = { path = "../macros" }
 platform = { path = "../platform" }
 spin = { version = "0.9", default-features = false, features = ["rwlock"] }
-redox-rt = { path = "../redox-rt", default-features = false }
+redox-rt = { path = "../redox-rt", default-features = false, features = ["proc"] }
 
 [lib]
 name = "ld_so"

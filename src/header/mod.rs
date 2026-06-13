@@ -161,3 +161,5 @@ pub mod wchar;
 pub mod wctype;
 // TODO: wordexp.h
 // TODO: xti.h (deprecated)
+
+pub mod sys_binder;

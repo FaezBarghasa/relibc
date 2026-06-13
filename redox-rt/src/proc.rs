@@ -14,6 +14,16 @@ use crate::{
     sys::{proc_call, thread_call},
     RtTcb, StaticProcInfo, DYNAMIC_PROC_INFO,
 };
+use crate::auxv_constants::{
+    AT_REDOX_INITIAL_CWD_PTR, AT_REDOX_INITIAL_CWD_LEN,
+    AT_REDOX_INHERITED_SIGIGNMASK, AT_REDOX_INHERITED_SIGPROCMASK,
+    AT_REDOX_INITIAL_DEFAULT_SCHEME_PTR, AT_REDOX_INITIAL_DEFAULT_SCHEME_LEN,
+    AT_REDOX_UMASK, AT_REDOX_PROC_FD, AT_REDOX_THR_FD,
+};
+#[cfg(target_pointer_width = "32")]
+use crate::auxv_constants::{
+    AT_REDOX_INHERITED_SIGIGNMASK_HI, AT_REDOX_INHERITED_SIGPROCMASK_HI,
+};
 
 use syscall::{flag::*, number::*};
 

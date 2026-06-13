@@ -25,6 +25,7 @@ exclude = ["tests", "dlmalloc-rs"]
 cc = "1"
 
 [dependencies]
+zerocopy = { version = "0.7.35", default-features = false, features = ["derive"] }
 bitflags = "2"
 cbitset = "0.2"
 posix-regex = { version = "0.1.4", features = ["no_std"] }
@@ -66,14 +67,14 @@ sc = "0.2.3"
 
 [target.'cfg(target_os = "redox")'.dependencies]
 redox_syscall = "0.5.13"
-redox-rt = { path = "redox-rt" }
+redox-rt = { path = "redox-rt", features = ["proc"] }
 redox-path = "0.3"
 redox_event = { git = "https://gitlab.redox-os.org/redox-os/event.git", default-features = false, features = [
     "redox_syscall",
 ] }
 
 [features]
-default = ["check_against_libc_crate"]
+default = []
 trace = []
 check_against_libc_crate = ["__libc_only_for_layout_checks"]
 
