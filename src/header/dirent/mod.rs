@@ -23,6 +23,7 @@ use crate::{
     out::Out,
     platform::{self, Pal, Sys, types::*},
 };
+use crate::header::errno::ENOSYS;
 
 use super::{
     errno::{self, EINVAL, EIO, ENOMEM, ENOTDIR},
@@ -270,7 +271,8 @@ pub extern "C" fn readdir_r(
     _entry: *mut dirent,
     _result: *mut *mut dirent,
 ) -> *mut dirent {
-    unimplemented!(); // plus, deprecated
+    platform::ERRNO.set(ENOSYS);
+    core::ptr::null_mut()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/rewinddir.html>.

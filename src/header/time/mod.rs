@@ -10,7 +10,7 @@ use crate::{
     error::{Errno, ResultExt},
     fs::File,
     header::{
-        errno::{EFAULT, EOVERFLOW},
+        errno::{EFAULT, EOVERFLOW, ENOSYS},
         fcntl::O_RDONLY,
         signal::sigevent,
         stdlib::getenv,
@@ -303,9 +303,10 @@ pub extern "C" fn clock() -> clock_t {
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/clock_getcpuclockid.html>.
-// #[unsafe(no_mangle)]
-pub extern "C" fn clock_getcpuclockid(pid: pid_t, clock_id: *mut clockid_t) -> c_int {
-    unimplemented!();
+#[unsafe(no_mangle)]
+pub extern "C" fn clock_getcpuclockid(_pid: pid_t, _clock_id: *mut clockid_t) -> c_int {
+    platform::ERRNO.set(ENOSYS);
+    ENOSYS
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/clock_getres.html>.
@@ -325,14 +326,21 @@ pub unsafe extern "C" fn clock_gettime(clock_id: clockid_t, tp: *mut timespec) -
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/clock_nanosleep.html>.
-// #[unsafe(no_mangle)]
+#[unsafe(no_mangle)]
 pub extern "C" fn clock_nanosleep(
-    clock_id: clockid_t,
-    flags: c_int,
+    _clock_id: clockid_t,
+    _flags: c_int,
     rqtp: *const timespec,
     rmtp: *mut timespec,
 ) -> c_int {
-    unimplemented!();
+    if rqtp.is_null() {
+        return EFAULT;
+    }
+    let res = unsafe { Sys::nanosleep(rqtp, rmtp) };
+    match res {
+        Ok(()) => 0,
+        Err(err) => err.0,
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/clock_getres.html>.
@@ -569,8 +577,9 @@ pub unsafe extern "C" fn timer_delete(timerid: timer_t) -> c_int {
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/timer_getoverrun.html>.
 // #[unsafe(no_mangle)]
-pub extern "C" fn timer_getoverrun(timerid: timer_t) -> c_int {
-    unimplemented!();
+pub extern "C" fn timer_getoverrun(_timerid: timer_t) -> c_int {
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/timer_getoverrun.html>.
@@ -585,7 +594,7 @@ pub unsafe extern "C" fn timer_gettime(timerid: timer_t, value: *mut itimerspec)
         .or_minus_one_errno()
 }
 
-/// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/timer_getoverrun.html>.
+/// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/timer_settime.html>.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn timer_settime(
     timerid: timer_t,
@@ -605,7 +614,15 @@ pub unsafe extern "C" fn timer_settime(
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/timespec_get.html>.
 // #[unsafe(no_mangle)]
 pub extern "C" fn timespec_get(ts: *mut timespec, base: c_int) -> c_int {
-    unimplemented!();
+    if base != TIME_UTC || ts.is_null() {
+        return 0;
+    }
+    let res = unsafe { clock_gettime(CLOCK_REALTIME, ts) };
+    if res == 0 {
+        base
+    } else {
+        0
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/tzset.html>.

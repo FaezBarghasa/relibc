@@ -123,7 +123,7 @@ unsafe extern "C" {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/fork.html>.
 // #[unsafe(no_mangle)]
 pub unsafe extern "C" fn _Fork() -> pid_t {
-    unimplemented!();
+    Sys::fork().or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/_Exit.html>.
@@ -289,8 +289,8 @@ pub extern "C" fn dup3(fildes: c_int, fildes2: c_int, flag: c_int) -> c_int {
 /// The `encrypt()` function was marked obsolescent in the Open Group Base Specifications Issue 8.
 #[deprecated]
 // #[unsafe(no_mangle)]
-pub extern "C" fn encrypt(block: [c_char; 64], edflag: c_int) {
-    unimplemented!();
+pub extern "C" fn encrypt(_block: [c_char; 64], _edflag: c_int) {
+    platform::ERRNO.set(errno::ENOSYS);
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/exec.html>.
@@ -835,7 +835,11 @@ pub unsafe extern "C" fn pipe2(fildes: *mut c_int, flags: c_int) -> c_int {
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/close.html>.
 // #[unsafe(no_mangle)]
 pub extern "C" fn posix_close(fildes: c_int, flag: c_int) -> c_int {
-    unimplemented!();
+    if flag != 0 {
+        platform::ERRNO.set(EINVAL);
+        return -1;
+    }
+    Sys::close(fildes).map(|()| 0).or_minus_one_errno()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/read.html>.
@@ -1208,7 +1212,7 @@ pub extern "C" fn usleep(useconds: useconds_t) -> c_int {
 #[deprecated]
 // #[unsafe(no_mangle)]
 pub extern "C" fn vfork() -> pid_t {
-    unimplemented!();
+    unsafe { fork() }
 }
 
 unsafe fn with_argv(

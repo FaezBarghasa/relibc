@@ -397,8 +397,9 @@ pub unsafe extern "C" fn gethostbyname(name: *const c_char) -> *mut hostent {
     &raw mut HOST_ENTRY as *mut hostent
 }
 
-pub unsafe extern "C" fn getnetbyaddr(net: u32, net_type: c_int) -> *mut netent {
-    unimplemented!();
+pub unsafe extern "C" fn getnetbyaddr(_net: u32, _net_type: c_int) -> *mut netent {
+    platform::ERRNO.set(ENOSYS);
+    core::ptr::null_mut()
 }
 
 #[unsafe(no_mangle)]

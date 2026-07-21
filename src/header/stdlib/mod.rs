@@ -23,7 +23,7 @@ use crate::{
         errno::{self, *},
         fcntl::*,
         limits,
-        stdio::flush_io_streams,
+        stdio::{flush_io_streams, snprintf},
         string::*,
         sys_ioctl::*,
         time::constants::CLOCK_MONOTONIC,
@@ -334,7 +334,54 @@ pub extern "C" fn ecvt(
     decpt: *mut c_int,
     sign: *mut c_int,
 ) -> *mut c_char {
-    unimplemented!();
+    static mut ECVT_BUF: [c_char; 64] = [0; 64];
+    let sign_val = if value < 0.0 { 1 } else { 0 };
+    let abs_val = value.abs();
+
+    let precision = if ndigit > 1 { ndigit as usize - 1 } else { 0 };
+    let s = alloc::format!("{:.1$e}", abs_val, precision);
+
+    if s.starts_with("nan") || s.starts_with("inf") {
+        unsafe {
+            *sign = 0;
+            *decpt = 0;
+            let bytes = s.as_bytes();
+            for i in 0..core::cmp::min(bytes.len(), 63) {
+                ECVT_BUF[i] = bytes[i] as c_char;
+            }
+            ECVT_BUF[core::cmp::min(bytes.len(), 63)] = 0;
+            return ECVT_BUF.as_mut_ptr();
+        }
+    }
+
+    let mut parts = s.split('e');
+    let mantissa = parts.next().unwrap_or("0");
+    let exponent = parts.next().unwrap_or("+00").parse::<i32>().unwrap_or(0);
+
+    let mut digits = alloc::string::String::new();
+    for c in mantissa.chars() {
+        if c.is_ascii_digit() {
+            digits.push(c);
+        }
+    }
+
+    let nd = ndigit as usize;
+    if digits.len() < nd {
+        digits.push_str(&"0".repeat(nd - digits.len()));
+    } else if digits.len() > nd {
+        digits.truncate(nd);
+    }
+
+    unsafe {
+        *sign = sign_val;
+        *decpt = exponent + 1;
+        let bytes = digits.as_bytes();
+        for i in 0..core::cmp::min(bytes.len(), 63) {
+            ECVT_BUF[i] = bytes[i] as c_char;
+        }
+        ECVT_BUF[core::cmp::min(bytes.len(), 63)] = 0;
+        ECVT_BUF.as_mut_ptr()
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/drand48.html>.
@@ -406,7 +453,48 @@ pub extern "C" fn fcvt(
     decpt: *mut c_int,
     sign: *mut c_int,
 ) -> *mut c_char {
-    unimplemented!();
+    static mut FCVT_BUF: [c_char; 64] = [0; 64];
+    let sign_val = if value < 0.0 { 1 } else { 0 };
+    let abs_val = value.abs();
+
+    let precision = if ndigit > 0 { ndigit as usize } else { 0 };
+    let s = alloc::format!("{:.1$}", abs_val, precision);
+
+    if s.starts_with("nan") || s.starts_with("inf") {
+        unsafe {
+            *sign = 0;
+            *decpt = 0;
+            let bytes = s.as_bytes();
+            for i in 0..core::cmp::min(bytes.len(), 63) {
+                FCVT_BUF[i] = bytes[i] as c_char;
+            }
+            FCVT_BUF[core::cmp::min(bytes.len(), 63)] = 0;
+            return FCVT_BUF.as_mut_ptr();
+        }
+    }
+
+    let mut digits = alloc::string::String::new();
+    let mut dot_pos = None;
+    for c in s.chars() {
+        if c == '.' {
+            dot_pos = Some(digits.len());
+        } else if c.is_ascii_digit() {
+            digits.push(c);
+        }
+    }
+
+    let dp = dot_pos.unwrap_or(digits.len()) as c_int;
+
+    unsafe {
+        *sign = sign_val;
+        *decpt = dp;
+        let bytes = digits.as_bytes();
+        for i in 0..core::cmp::min(bytes.len(), 63) {
+            FCVT_BUF[i] = bytes[i] as c_char;
+        }
+        FCVT_BUF[core::cmp::min(bytes.len(), 63)] = 0;
+        FCVT_BUF.as_mut_ptr()
+    }
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/free.html>.
@@ -423,7 +511,11 @@ pub unsafe extern "C" fn free(ptr: *mut c_void) {
 #[deprecated]
 // #[unsafe(no_mangle)]
 pub extern "C" fn gcvt(value: c_double, ndigit: c_int, buf: *mut c_char) -> *mut c_char {
-    unimplemented!();
+    let fmt = c"%.*g";
+    unsafe {
+        snprintf(buf, 64, fmt.as_ptr(), ndigit, value);
+    }
+    buf
 }
 
 unsafe fn find_env(search: *const c_char) -> Option<(usize, *mut c_char)> {
@@ -1308,8 +1400,8 @@ pub unsafe extern "C" fn setenv(
 /// Specifications Issue 8.
 #[deprecated]
 // #[unsafe(no_mangle)]
-pub unsafe extern "C" fn setkey(key: *const c_char) {
-    unimplemented!();
+pub unsafe extern "C" fn setkey(_key: *const c_char) {
+    platform::ERRNO.set(ENOSYS);
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/initstate.html>.
@@ -1602,7 +1694,8 @@ pub unsafe extern "C" fn system(command: *const c_char) -> c_int {
 #[deprecated]
 // #[unsafe(no_mangle)]
 pub extern "C" fn ttyslot() -> c_int {
-    unimplemented!();
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/unlockpt.html>.

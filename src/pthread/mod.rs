@@ -405,8 +405,11 @@ pub fn get_cpu_clkid(thread: &Pthread) -> Result<clockid_t, Errno> {
     // TODO
     Err(Errno(ENOENT))
 }
-pub fn get_sched_param(thread: &Pthread) -> Result<(clockid_t, sched_param), Errno> {
-    todo!()
+pub fn get_sched_param(_thread: &Pthread) -> Result<(clockid_t, sched_param), Errno> {
+    Ok((
+        crate::header::sched::SCHED_OTHER,
+        sched_param { sched_priority: 0 },
+    ))
 }
 
 // TODO: Hash map?

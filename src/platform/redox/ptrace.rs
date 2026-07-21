@@ -254,19 +254,18 @@ unsafe fn inner_ptrace(
             (&mut &session.regs).write(&redox_regs)?;
             Ok(0)
         }
-        _ => unimplemented!(),
+        _ => Err(io::Error::from_raw_os_error(crate::header::errno::EINVAL)),
     }
 }
 
 #[cfg(target_arch = "riscv64")]
 fn inner_ptrace(
-    request: c_int,
-    pid: pid_t,
-    addr: *mut c_void,
-    data: *mut c_void,
+    _request: c_int,
+    _pid: pid_t,
+    _addr: *mut c_void,
+    _data: *mut c_void,
 ) -> io::Result<c_int> {
-    //TODO: riscv64
-    unimplemented!("inner_ptrace not implemented on riscv64");
+    Err(io::Error::from_raw_os_error(crate::header::errno::EINVAL))
 }
 
 impl PalPtrace for Sys {
