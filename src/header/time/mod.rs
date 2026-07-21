@@ -495,11 +495,6 @@ pub unsafe extern "C" fn strftime(
 }
 
 // See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/strftime.html>.
-// TODO: needs locale_t
-// #[unsafe(no_mangle)]
-/*pub extern "C" fn strftime_l(s: *mut char, maxsize: size_t, format: *const c_char, timeptr: *const tm, locale: locale_t) -> size_t {
-    unimplemented!();
-}*/
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/time.html>.
 #[unsafe(no_mangle)]

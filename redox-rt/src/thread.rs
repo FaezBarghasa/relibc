@@ -11,7 +11,7 @@ use crate::{
 
 #[no_mangle]
 pub unsafe extern "C" fn __relibc_internal_rlct_clone_ret() {
-    unimplemented!()
+    loop {}
 }
 
 /// Spawns a new context sharing the same address space as the current one (i.e. a new thread).

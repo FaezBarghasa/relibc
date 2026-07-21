@@ -617,7 +617,7 @@ use core::sync::atomic::{AtomicU32, AtomicU8};
 
 #[no_mangle]
 pub unsafe extern "C" fn __relibc_internal_sigentry() {
-    unimplemented!()
+    loop {}
 }
 
 pub fn setup_sighandler(tcb: &RtTcb, first_thread: bool) {

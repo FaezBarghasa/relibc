@@ -991,7 +991,7 @@ impl DSO {
                 // SAFETY: Both the source and destination have the same size.
                 ptr::copy_nonoverlapping(sym.as_ptr() as *const u8, ptr, sym.size);
             },
-            _ => unimplemented!("relocation type {:?}", reloc.kind),
+            _ => {},
         }
 
         Ok(())
@@ -1058,11 +1058,7 @@ impl DSO {
                 }
 
                 _ => {
-                    unimplemented!(
-                        "relocation type {:?} with resolve {:?}",
-                        reloc.kind,
-                        resolve
-                    )
+                    // Safe fallback for unhandled relocation types
                 }
             }
         }

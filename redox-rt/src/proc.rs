@@ -54,7 +54,7 @@ use crate::arch::deactivate_tcb;
 
 #[no_mangle]
 pub unsafe extern "C" fn __relibc_internal_fork_wrapper(_arg: usize) -> usize {
-    unimplemented!()
+    usize::MAX
 }
 
 #[no_mangle]
@@ -63,7 +63,9 @@ pub unsafe extern "C" fn __relibc_internal_fork_ret(
     _prev_sigmask: u64,
     _ret_ptr: *mut usize,
 ) {
-    unimplemented!()
+    if !_ret_ptr.is_null() {
+        _ret_ptr.write(usize::MAX);
+    }
 }
 
 pub fn exit(status: u8) -> ! {

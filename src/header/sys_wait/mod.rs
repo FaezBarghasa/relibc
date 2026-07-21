@@ -27,24 +27,7 @@ pub unsafe extern "C" fn wait(stat_loc: *mut c_int) -> pid_t {
 // pub unsafe extern "C" fn wait3(
 //     stat_loc: *mut c_int,
 //     options: c_int,
-//     resource_usage: *mut rusage,
-// ) -> pid_t {
-//     unimplemented!();
-// }
-
-/*
- * TODO: implement idtype_t, id_t, and siginfo_t
- *
- * #[unsafe(no_mangle)]
- * pub unsafe extern "C" fn waitid(
- *     idtype: idtype_t,
- *     id: id_t,
- *     infop: siginfo_t,
- *     options: c_int
- *  ) -> c_int {
- *      unimplemented!();
- *  }
- */
+// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/waitpid.html>.
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn waitpid(pid: pid_t, stat_loc: *mut c_int, options: c_int) -> pid_t {

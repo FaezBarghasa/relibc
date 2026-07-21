@@ -5,6 +5,6 @@ use platform::types::*;
 /*
 #[unsafe(no_mangle)]
 pub extern "C" fn func(args) -> c_int {
-    unimplemented!();
+    0
 }
 */

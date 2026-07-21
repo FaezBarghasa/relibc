@@ -131,12 +131,7 @@ pub unsafe extern "C" fn strcasecmp(s1: *const c_char, s2: *const c_char) -> c_i
     inner_casecmp(zipped)
 }
 
-// TODO: needs locale_t
 // See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcasecmp.html>.
-// #[unsafe(no_mangle)]
-/*pub extern "C" fn strcasecmp_l(s1: *const c_char, s2: *const c_char, locale: locale_t) -> c_int {
-    unimplemented!();
-}*/
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcasecmp.html>.
 #[unsafe(no_mangle)]
@@ -148,13 +143,6 @@ pub unsafe extern "C" fn strncasecmp(s1: *const c_char, s2: *const c_char, n: si
     let zipped = zip(s1_iter, s2_iter).take(n);
     inner_casecmp(zipped)
 }
-
-// TODO: needs locale_t
-// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/strcasecmp.html>.
-// #[unsafe(no_mangle)]
-/*pub extern "C" fn strncasecmp_l(s1: *const c_char, s2: *const c_char, n: size_t, locale: locale_t) -> c_int {
-    unimplemented!();
-}*/
 
 /// Given two zipped `&c_char` iterators, either find the first comparison != 0, or return 0.
 fn inner_casecmp<'a>(iterator: impl Iterator<Item = (&'a c_char, &'a c_char)>) -> c_int {
