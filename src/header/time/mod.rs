@@ -384,8 +384,9 @@ pub unsafe extern "C" fn difftime(time1: time_t, time0: time_t) -> c_double {
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/getdate.html>.
 // #[unsafe(no_mangle)]
-pub unsafe extern "C" fn getdate(string: *const c_char) -> *const tm {
-    unimplemented!();
+pub unsafe extern "C" fn getdate(_string: *const c_char) -> *const tm {
+    platform::ERRNO.set(ENOSYS);
+    ptr::null()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/gmtime.html>.

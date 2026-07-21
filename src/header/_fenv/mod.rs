@@ -316,7 +316,7 @@ pub unsafe extern "C" fn fetestexcept(excepts: c_int) -> c_int {
         target_arch = "riscv64"
     )))]
     {
-        unimplemented!();
+        0
     }
 }
 
@@ -353,7 +353,7 @@ pub unsafe extern "C" fn fegetround() -> c_int {
         target_arch = "riscv64"
     )))]
     {
-        unimplemented!();
+        0
     }
 }
 
