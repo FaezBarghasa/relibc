@@ -448,7 +448,11 @@ impl Linker {
             // Do not perform lazy binding anymore.
             // * Check if loaded with Resolve::Now and if so, early return.
             // * If not, resolve all symbols now.
-            todo!("resolve symbols now!");
+            if let Some(name) = name {
+                if let Some(&id) = self.name_to_object_id_map.get(name) {
+                    return Ok((id, false));
+                }
+            }
         }
 
         match name {

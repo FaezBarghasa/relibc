@@ -151,11 +151,11 @@ impl Pal for Sys {
         unreachable!()
     }
     unsafe fn fexecve(
-        fildes: c_int,
-        argv: *const *mut c_char,
-        envp: *const *mut c_char,
+        _fildes: c_int,
+        _argv: *const *mut c_char,
+        _envp: *const *mut c_char,
     ) -> Result<()> {
-        todo!("not yet used by relibc")
+        Err(Error::new(c::ENOSYS))
     }
 
     fn exit(status: c_int) -> ! {

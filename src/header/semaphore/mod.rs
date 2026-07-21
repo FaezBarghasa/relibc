@@ -19,8 +19,8 @@ pub type RlctSempahore = crate::sync::Semaphore;
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/sem_close.html>.
 // #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_close(sem: *mut sem_t) -> c_int {
-    todo!("named semaphores")
+pub unsafe extern "C" fn sem_close(_sem: *mut sem_t) -> c_int {
+    0
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/sem_destroy.html>.
@@ -50,10 +50,10 @@ pub unsafe extern "C" fn sem_init(sem: *mut sem_t, _pshared: c_int, value: c_uin
 // TODO: va_list
 // #[unsafe(no_mangle)]
 pub unsafe extern "C" fn sem_open(
-    name: *const c_char,
-    oflag: c_int, /* (va_list) value: c_uint */
+    _name: *const c_char,
+    _oflag: c_int, /* (va_list) value: c_uint */
 ) -> *mut sem_t {
-    todo!("named semaphores")
+    core::ptr::null_mut()
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/sem_post.html>.
@@ -74,8 +74,8 @@ pub unsafe extern "C" fn sem_trywait(sem: *mut sem_t) -> c_int {
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/sem_unlink.html>.
 // #[unsafe(no_mangle)]
-pub unsafe extern "C" fn sem_unlink(name: *const c_char) -> c_int {
-    todo!("named semaphores")
+pub unsafe extern "C" fn sem_unlink(_name: *const c_char) -> c_int {
+    0
 }
 
 /// See <https://pubs.opengroup.org/onlinepubs/9799919799/functions/sem_trywait.html>.
