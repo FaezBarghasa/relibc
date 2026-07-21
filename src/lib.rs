@@ -100,6 +100,9 @@ pub mod pthread;
 pub mod raw_cell;
 pub mod start;
 pub mod sync;
+pub mod binder;
+pub mod aio;
+pub mod linker;
 
 use crate::platform::{Allocator, NEWALLOCATOR, Pal, Sys};
 

@@ -16,6 +16,7 @@ pub mod pthread_mutex;
 pub mod rwlock;
 pub mod semaphore;
 pub mod waitval;
+pub mod ntsync;
 
 pub use self::{
     mutex::{Mutex, MutexGuard},
