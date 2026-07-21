@@ -1,6 +1,6 @@
 use crate::{
-    header::{signal::sigevent, time::timespec},
-    platform::types::*,
+    header::{errno::ENOSYS, signal::sigevent, time::timespec},
+    platform::{self, types::*},
 };
 
 pub struct aiocb {
@@ -12,51 +12,67 @@ pub struct aiocb {
     pub aio_sigevent: sigevent,
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS`.
 // #[unsafe(no_mangle)]
-pub extern "C" fn aio_read(aiocbp: *mut aiocb) -> c_int {
-    unimplemented!();
+pub extern "C" fn aio_read(_aiocbp: *mut aiocb) -> c_int {
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS`.
 // #[unsafe(no_mangle)]
-pub extern "C" fn aio_write(aiocbp: *mut aiocb) -> c_int {
-    unimplemented!();
+pub extern "C" fn aio_write(_aiocbp: *mut aiocb) -> c_int {
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS`.
 // #[unsafe(no_mangle)]
 pub extern "C" fn lio_listio(
-    mode: c_int,
-    list: *const *const aiocb,
-    nent: c_int,
-    sig: *mut sigevent,
+    _mode: c_int,
+    _list: *const *const aiocb,
+    _nent: c_int,
+    _sig: *mut sigevent,
 ) -> c_int {
-    unimplemented!();
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS`.
 // #[unsafe(no_mangle)]
-pub extern "C" fn aio_error(aiocbp: *const aiocb) -> c_int {
-    unimplemented!();
+pub extern "C" fn aio_error(_aiocbp: *const aiocb) -> c_int {
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS` cast to `usize::MAX`.
 // #[unsafe(no_mangle)]
-pub extern "C" fn aio_return(aiocbp: *mut aiocb) -> usize {
-    unimplemented!();
+pub extern "C" fn aio_return(_aiocbp: *mut aiocb) -> usize {
+    platform::ERRNO.set(ENOSYS);
+    usize::MAX
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS`.
 // #[unsafe(no_mangle)]
-pub extern "C" fn aio_cancel(fildes: c_int, aiocbp: *mut aiocb) -> c_int {
-    unimplemented!();
+pub extern "C" fn aio_cancel(_fildes: c_int, _aiocbp: *mut aiocb) -> c_int {
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS`.
 // #[unsafe(no_mangle)]
 pub extern "C" fn aio_suspend(
-    list: *const *const aiocb,
-    nent: c_int,
-    timeout: *const timespec,
+    _list: *const *const aiocb,
+    _nent: c_int,
+    _timeout: *const timespec,
 ) -> c_int {
-    unimplemented!();
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
 
+/// Asynchronous I/O is not implemented on Redox. Returns `ENOSYS`.
 // #[unsafe(no_mangle)]
-pub extern "C" fn aio_fsync(operation: c_int, aiocbp: *mut aiocb) -> c_int {
-    unimplemented!();
+pub extern "C" fn aio_fsync(_operation: c_int, _aiocbp: *mut aiocb) -> c_int {
+    platform::ERRNO.set(ENOSYS);
+    -1
 }
